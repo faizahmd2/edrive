@@ -330,6 +330,30 @@ func ensureGoogleDriveRoot() (string, error) {
 }
 
 func ensureVault(root string) (string, error) {
+	if binding, ok, err := vault.ReadBinding(); err != nil {
+		fmt.Println()
+		fmt.Println("The saved edrive vault ownership record is unreadable.")
+		fmt.Println("edrive will not guess which Cryptomator vault belongs to it.")
+		fmt.Println("You can explicitly choose the correct vault during setup.")
+	} else if ok && pathInside(root, binding.Path) {
+		state, stateErr := vault.Inspect(binding.Path)
+		if stateErr == nil {
+			if state.Complete {
+				fmt.Println()
+				fmt.Println("Your existing edrive vault was found:")
+				fmt.Println(" ", binding.Path)
+				if err := ensureRegistered(binding.Path); err != nil {
+					return "", err
+				}
+				return binding.Path, nil
+			}
+			fmt.Println()
+			fmt.Println("Your previous edrive vault is no longer complete:")
+			fmt.Println(" ", binding.Path)
+			fmt.Println("edrive will not overwrite it.")
+		}
+	}
+
 	candidate := filepath.Join(root, "edrive")
 
 	for {
@@ -340,7 +364,7 @@ func ensureVault(root string) (string, error) {
 
 		if state.Managed {
 			if !state.Complete {
-				fmt.Println("edrive's own vault marker exists, but the vault is incomplete.")
+				fmt.Println("edrive's previous vault record points here, but the vault is incomplete.")
 				return chooseVaultParent(root)
 			}
 			return ensureRegistered(candidate)
@@ -559,6 +583,14 @@ func mounted(path string) bool {
 		return false
 	}
 	return strings.Contains(string(out), " on "+filepath.Clean(path)+" (")
+}
+
+func pathInside(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 func brewCaskInstalled(name string) bool {
