@@ -11,7 +11,7 @@ import (
 )
 
 type Client struct {
-	Path        string
+	Path       string
 	RemoteName string
 	RemotePath string
 }
