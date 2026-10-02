@@ -58,8 +58,8 @@ edrive setup
 
 `edrive setup` is macOS-aware and prepares the local environment. It can install
 the required Homebrew packages/casks, detect the local Google Drive location,
-locate or download the official Cryptomator CLI, create the local edrive
-directories, reuse/create the Mac age identity, register known public
+locate the official Cryptomator CLI, create the local edrive
+directories, reuse/validate the Mac age identity, register known public
 recipients, and write the machine-specific config.
 
 Cryptomator vault creation remains a Cryptomator operation. On a fresh machine,
