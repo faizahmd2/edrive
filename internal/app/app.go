@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/faiz/edrive/internal/config"
-	"github.com/faiz/edrive/internal/cryptomator"
-	"github.com/faiz/edrive/internal/deps"
-	"github.com/faiz/edrive/internal/device"
-	"github.com/faiz/edrive/internal/keychain"
-	"github.com/faiz/edrive/internal/rclone"
-	"github.com/faiz/edrive/internal/ui"
-	"github.com/faiz/edrive/internal/vault"
+	"github.com/faizahmd2/edrive/internal/config"
+	"github.com/faizahmd2/edrive/internal/cryptomator"
+	"github.com/faizahmd2/edrive/internal/deps"
+	"github.com/faizahmd2/edrive/internal/device"
+	"github.com/faizahmd2/edrive/internal/keychain"
+	"github.com/faizahmd2/edrive/internal/rclone"
+	"github.com/faizahmd2/edrive/internal/ui"
+	"github.com/faizahmd2/edrive/internal/vault"
 )
 
 type App struct {
