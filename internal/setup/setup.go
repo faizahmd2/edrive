@@ -3,7 +3,6 @@ package setup
 import (
 	"archive/zip"
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
