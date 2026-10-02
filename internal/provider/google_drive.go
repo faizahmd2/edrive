@@ -24,22 +24,17 @@ func (p GoogleDrive) Name() string {
 	return "Google Drive"
 }
 
-func (p GoogleDrive) Root() (string, error) {
-	if root := filepath.Clean(p.PreferredRoot); root != "." && isDir(root) {
-		return root, nil
-	}
-
+func (p GoogleDrive) Candidates() ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	candidates := make([]string, 0, 8)
 
-	// Modern Google Drive File Provider locations.
 	matches, err := filepath.Glob(filepath.Join(home, "Library", "CloudStorage", "GoogleDrive-*", "My Drive"))
 	if err != nil {
-		return "", fmt.Errorf("find Google Drive storage: %w", err)
+		return nil, fmt.Errorf("find Google Drive storage: %w", err)
 	}
 	for _, match := range matches {
 		if isDir(match) {
@@ -47,56 +42,44 @@ func (p GoogleDrive) Root() (string, error) {
 		}
 	}
 
-	// Legacy streaming location.
 	legacy := filepath.Join("/Volumes", "GoogleDrive", "My Drive")
 	if isDir(legacy) {
 		candidates = append(candidates, legacy)
 	}
 
-	// A user/admin configured legacy streaming mount point.
 	if mount := googleDriveMountPoint(); mount != "" {
-		for _, candidate := range []string{
-			mount,
-			filepath.Join(mount, "My Drive"),
-		} {
+		for _, candidate := range []string{mount, filepath.Join(mount, "My Drive")} {
 			if isDir(candidate) {
 				candidates = append(candidates, candidate)
 			}
 		}
 	}
 
-	// Very old local mirror layout.
 	legacyMirror := filepath.Join(home, "Google Drive", "My Drive")
 	if isDir(legacyMirror) {
 		candidates = append(candidates, legacyMirror)
 	}
 
 	sort.Strings(candidates)
-	candidates = unique(candidates)
+	return unique(candidates), nil
+}
 
+func (p GoogleDrive) Root() (string, error) {
+	if root := cleanExisting(p.PreferredRoot); root != "" {
+		return root, nil
+	}
+
+	candidates, err := p.Candidates()
+	if err != nil {
+		return "", err
+	}
 	if len(candidates) == 0 {
-		return "", fmt.Errorf("Google Drive local storage is not available")
+		return "", fmt.Errorf("Google Drive's local My Drive is not available")
 	}
 	if len(candidates) == 1 {
 		return candidates[0], nil
 	}
-
-	name := p.StorageName
-	if name == "" {
-		name = "edrive"
-	}
-
-	var matching []string
-	for _, root := range candidates {
-		if isFile(filepath.Join(root, name, "vault.cryptomator")) {
-			matching = append(matching, root)
-		}
-	}
-	if len(matching) == 1 {
-		return matching[0], nil
-	}
-
-	return "", fmt.Errorf("multiple Google Drive storage locations found; edrive cannot choose safely")
+	return "", fmt.Errorf("Google Drive has multiple local My Drive locations")
 }
 
 func (p GoogleDrive) VaultPath(name string) (string, error) {
@@ -104,13 +87,30 @@ func (p GoogleDrive) VaultPath(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(name) == "" {
-		name = p.StorageName
-	}
-	if strings.TrimSpace(name) == "" {
+	name = strings.TrimSpace(name)
+	if name == "" {
 		name = "edrive"
 	}
-	return filepath.Join(root, name), nil
+	relative, err := safeRelative(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, relative), nil
+}
+
+func NormalizeRoot(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || path == "" {
+		return ""
+	}
+	if strings.EqualFold(filepath.Base(path), "My Drive") {
+		return path
+	}
+	child := filepath.Join(path, "My Drive")
+	if isDir(child) {
+		return child
+	}
+	return path
 }
 
 func EnsureRunning() error {
@@ -125,19 +125,30 @@ func googleDriveMountPoint() string {
 	return strings.TrimSpace(string(out))
 }
 
+func cleanExisting(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || path == "" || !isDir(path) {
+		return ""
+	}
+	return path
+}
+
+func safeRelative(path string) (string, error) {
+	clean := filepath.Clean(path)
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("invalid edrive vault location")
+	}
+	return clean, nil
+}
+
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }
 
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
 func unique(paths []string) []string {
 	out := make([]string, 0, len(paths))
-	seen := make(map[string]struct{}, len(paths))
+	seen := make(map[string]struct{})
 	for _, path := range paths {
 		clean := filepath.Clean(path)
 		if clean == "." {
