@@ -17,7 +17,7 @@ import (
 const recoveryFileName = "edrive-recovery-key.txt"
 
 func (a App) Backup() error {
-	if err := a.requireBackupTools(); err != nil {
+	if err := a.requireConfigured(); err != nil {
 		return err
 	}
 
@@ -25,6 +25,12 @@ func (a App) Backup() error {
 	// key; later backups reuse it.
 	recoveryIdentity, err := ensureRecoveryIdentity(a.Config.AgePath)
 	if err != nil {
+		return err
+	}
+	if err := a.ensureUnlocked(); err != nil {
+		return err
+	}
+	if err := a.requireBackupTools(); err != nil {
 		return err
 	}
 
@@ -59,7 +65,10 @@ func (a App) Backup() error {
 	}
 
 	recipients := append(append([]string{}, deviceRecipients...), recoveryRecipient)
-	if err := os.MkdirAll(destination, 0700); err != nil {
+
+	recoveryPath := filepath.Join(destination, recoveryFileName)
+	exported, err := ensureExportedRecoveryKey(recoveryPath, recoveryIdentity, keygenPath)
+	if err != nil {
 		return err
 	}
 
@@ -108,6 +117,8 @@ func (a App) Backup() error {
 	fmt.Println("Backup saved:", finalPath)
 	if exported {
 		fmt.Println("Recovery key saved:", recoveryPath)
+	} else {
+		fmt.Println("Recovery key already exists in this backup folder.")
 	}
 	return nil
 }
