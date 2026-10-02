@@ -447,7 +447,7 @@ func writeConfig(
 			if len(parts) != 2 || strings.TrimSpace(parts[0]) != "EDRIVE_SNAPSHOT_KEEP" {
 				continue
 			}
-			value := strings.Trim(strings.TrimSpace(parts[1]), ""'")
+			value := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
 			if n, err := strconv.Atoi(value); err == nil && n > 0 {
 				keep = n
 			}
@@ -479,4 +479,3 @@ func writeConfig(
 	}
 	return os.Chmod(path, 0600)
 }
-

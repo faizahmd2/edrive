@@ -146,7 +146,7 @@ func Load(path string) (Config, error) {
 
 func unquote(v string) string {
 	if len(v) >= 2 {
-		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == ''' && v[len(v)-1] == ''') {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
 			if v[0] == '"' {
 				if s, err := strconv.Unquote(v); err == nil {
 					return s
