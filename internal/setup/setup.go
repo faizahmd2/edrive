@@ -762,6 +762,11 @@ func versionMatches(path, version string) bool {
 	return err == nil && bytes.Contains(out, []byte(version))
 }
 
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
