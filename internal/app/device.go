@@ -68,7 +68,7 @@ func (a App) removeDevice(label string) error {
 	if label == "" {
 		return fmt.Errorf("device label is required")
 	}
-	ok, err := ui.Confirm("Remove device identity "+label+"? This device will not be included in future backups.")
+	ok, err := ui.Confirm("Remove device identity " + label + "? This device will not be included in future backups.")
 	if err != nil {
 		return err
 	}
