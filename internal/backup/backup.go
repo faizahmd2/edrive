@@ -11,6 +11,11 @@ import (
 	"strings"
 )
 
+type stageResult struct {
+	name string
+	err  error
+}
+
 func Create(root string, recipients []string, agePath, zstdPath string, output io.Writer) error {
 	if root == "" {
 		return fmt.Errorf("workspace path is empty")
@@ -66,54 +71,49 @@ func Create(root string, recipients []string, agePath, zstdPath string, output i
 		return fmt.Errorf("start zstd: %w", err)
 	}
 
-	tarDone := make(chan error, 1)
+	done := make(chan stageResult, 2)
+
 	go func() {
 		err := writeTar(root, zstdIn)
 		closeErr := zstdIn.Close()
 		if err == nil {
 			err = closeErr
 		}
-		tarDone <- err
+		done <- stageResult{name: "tar", err: err}
 	}()
 
-	agePipeDone := make(chan error, 1)
 	go func() {
 		_, err := io.Copy(ageIn, zstdOut)
 		closeErr := ageIn.Close()
 		if err == nil {
 			err = closeErr
 		}
-		agePipeDone <- err
+		done <- stageResult{name: "pipe", err: err}
 	}()
 
-	tarErr := <-tarDone
-	if tarErr != nil {
-		_ = zstdCmd.Process.Kill()
-		_ = ageCmd.Process.Kill()
-		_ = zstdIn.Close()
-		_ = ageIn.Close()
-		<-agePipeDone
-		_ = zstdCmd.Wait()
-		_ = ageCmd.Wait()
-		return tarErr
+	var firstErr error
+	for i := 0; i < 2; i++ {
+		result := <-done
+		if result.err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", result.name, result.err)
+			_ = zstdCmd.Process.Kill()
+			_ = ageCmd.Process.Kill()
+			_ = zstdIn.Close()
+			_ = ageIn.Close()
+		}
 	}
 
-	agePipeErr := <-agePipeDone
-	if agePipeErr != nil {
-		_ = zstdCmd.Process.Kill()
-		_ = ageCmd.Process.Kill()
-		_ = zstdCmd.Wait()
-		_ = ageCmd.Wait()
-		return fmt.Errorf("compress backup: %w", agePipeErr)
-	}
+	zstdErr := zstdCmd.Wait()
+	ageErr := ageCmd.Wait()
 
-	if err := zstdCmd.Wait(); err != nil {
-		_ = ageCmd.Process.Kill()
-		_ = ageCmd.Wait()
-		return fmt.Errorf("compress backup: %w", err)
+	if firstErr != nil {
+		return firstErr
 	}
-	if err := ageCmd.Wait(); err != nil {
-		return fmt.Errorf("encrypt backup: %w", err)
+	if zstdErr != nil {
+		return fmt.Errorf("compress backup: %w", zstdErr)
+	}
+	if ageErr != nil {
+		return fmt.Errorf("encrypt backup: %w", ageErr)
 	}
 	return nil
 }
@@ -128,9 +128,7 @@ func writeTar(root string, output io.Writer) error {
 	}
 
 	tw := tar.NewWriter(output)
-	defer tw.Close()
-
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -188,6 +186,11 @@ func writeTar(root string, output io.Writer) error {
 			return fmt.Errorf("unsupported file in workspace: %s", name)
 		}
 	})
+	closeErr := tw.Close()
+	if walkErr != nil {
+		return walkErr
+	}
+	return closeErr
 }
 
 func shouldSkip(name string) bool {
