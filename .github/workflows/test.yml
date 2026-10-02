@@ -18,6 +18,6 @@ jobs:
         with:
           go-version: '1.26.8'
           cache: false
-      - run: test -z "$(gofmt -l .)"
+      - run: gofmt -d .
       - run: go test ./...
       - run: go vet ./...
