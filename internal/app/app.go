@@ -135,9 +135,8 @@ func (a App) Status() error {
 	fmt.Printf("Workspace: %s\n", a.Config.DataRoot)
 	fmt.Printf("State:     %s\n", workspaceState(a.Config.DataRoot))
 
-	if root, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root(); err == nil {
+	if _, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root(); err == nil {
 		fmt.Println("Storage:   Google Drive")
-		fmt.Printf("Vault:     %s\n", filepath.Join(root, a.Config.StorageName))
 	} else {
 		fmt.Println("Storage:   unavailable")
 	}
@@ -353,7 +352,9 @@ func (a App) Backup() error {
 	a.Config.LastBackupDir = destination
 	configErr := a.Config.Save()
 
-	_ = ui.Open(packageDir)
+	if err := ui.Open(packageDir); err != nil {
+		fmt.Println("Backup completed, but Finder could not be opened.")
+	}
 
 	info, statErr := os.Stat(finalArchive)
 	if statErr != nil {
@@ -421,6 +422,9 @@ func (a App) Restore() error {
 	if !selected {
 		fmt.Println("Restore cancelled.")
 		return nil
+	}
+	if pathInside(a.Config.DataRoot, restoreDir) {
+		return fmt.Errorf("restore destination cannot be inside the edrive workspace")
 	}
 
 	return withIdentityFile(recoveryIdentity, func(identityPath string) error {
