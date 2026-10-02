@@ -23,28 +23,27 @@ func GenerateIdentity(keygenPath, tempDir string) (string, error) {
 	if err := os.MkdirAll(tempDir, 0700); err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp(tempDir, ".identity-*")
-	if err != nil {
-		return "", err
-	}
-	path := f.Name()
-	if err := f.Chmod(0600); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", err
-	}
-	defer os.Remove(path)
 
-	if err := exec.Command(keygenPath, "-pq", "-o", path).Run(); err != nil {
-		return "", fmt.Errorf("generate age identity: %w", err)
+	workspace, err := os.MkdirTemp(tempDir, ".identity-*")
+	if err != nil {
+		return "", fmt.Errorf("create age identity workspace: %w", err)
 	}
+	defer os.RemoveAll(workspace)
+
+	path := filepath.Join(workspace, "identity.txt")
+	cmd := exec.Command(keygenPath, "-pq", "-o", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			return "", fmt.Errorf("generate age identity: %w", err)
+		}
+		return "", fmt.Errorf("generate age identity: %w: %s", err, detail)
+	}
+
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read generated age identity: %w", err)
 	}
 	identity := strings.TrimSpace(string(b))
 	if identity == "" {
@@ -68,7 +67,8 @@ func Recipient(identity, keygenPath, tempDir string) (string, error) {
 		_ = f.Close()
 		return "", err
 	}
-	if _, err := f.WriteString(strings.TrimSpace(identity) + "\n"); err != nil {
+	if _, err := f.WriteString(strings.TrimSpace(identity) + "
+"); err != nil {
 		_ = f.Close()
 		return "", err
 	}
@@ -76,9 +76,14 @@ func Recipient(identity, keygenPath, tempDir string) (string, error) {
 		return "", err
 	}
 
-	out, err := exec.Command(keygenPath, "-y", path).Output()
+	cmd := exec.Command(keygenPath, "-y", path)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("derive age recipient: %w", err)
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			return "", fmt.Errorf("derive age recipient: %w", err)
+		}
+		return "", fmt.Errorf("derive age recipient: %w: %s", err, detail)
 	}
 	recipient := strings.TrimSpace(string(out))
 	if !strings.HasPrefix(recipient, "age1") {
