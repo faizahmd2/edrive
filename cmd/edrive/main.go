@@ -34,7 +34,7 @@ func usage() {
 	edrive identity add PATH --to RECIPIENTS_FILE
 
 	Config:
-	EDRIVE_CONFIG   Override config.sh path (default ~/Desktop/local-infra/edrive/config.sh)
+	EDRIVE_CONFIG   Override config.sh path (default ~/Library/Application Support/edrive/config.sh)
 
 	The live vault remains managed by Cryptomator/FUSE-T. edrive owns the
 	independent, portable age-encrypted recovery path and verification.
@@ -91,8 +91,7 @@ func main() {
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		fail(command, err)
 	}
 	a := app.App{Config: cfg}
 
@@ -224,7 +223,7 @@ Usage:
   edrive identity add PATH --to RECIPIENTS_FILE
 
 Config:
-  EDRIVE_CONFIG   Override config.sh path (default ~/Desktop/local-infra/edrive/config.sh)
+  EDRIVE_CONFIG   Override config.sh path (default ~/Library/Application Support/edrive/config.sh)
 
 The live vault remains managed by Cryptomator/FUSE-T. edrive owns the
 independent, portable age-encrypted recovery path and verification.`, version)
