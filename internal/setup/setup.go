@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"time"
 
 	"github.com/faiz/edrive/internal/config"
 )
@@ -721,8 +722,7 @@ func askYesNo(prompt string, defaultYes bool) (bool, error) {
 }
 
 func Remove() error {
-	cfg, err := config.Load(config.DefaultPath())
-	if err != nil {
+	if _, err := config.Load(config.DefaultPath()); err != nil {
 		return err
 	}
 	fmt.Println("This removes edrive's local configuration and runtime state.")
