@@ -13,6 +13,11 @@ import (
 
 const encryptedSuffix = ".tar.zst.age"
 
+type stageResult struct {
+	name string
+	err  error
+}
+
 func File(inputPath, identityPath string) (string, error) {
 	if inputPath == "" || identityPath == "" {
 		return "", fmt.Errorf("encrypted file and recovery key are required")
@@ -104,8 +109,7 @@ func File(inputPath, identityPath string) (string, error) {
 		return "", fmt.Errorf("start zstd: %w", err)
 	}
 
-	copyDone := make(chan error, 1)
-	extractDone := make(chan error, 1)
+	results := make(chan stageResult, 2)
 
 	go func() {
 		_, copyErr := io.Copy(zstdIn, ageOut)
@@ -113,26 +117,32 @@ func File(inputPath, identityPath string) (string, error) {
 		if copyErr == nil {
 			copyErr = closeErr
 		}
-		copyDone <- copyErr
+		results <- stageResult{name: "decrypt stream", err: copyErr}
 	}()
 
 	go func() {
-		extractDone <- extractTar(zstdOut, stagePath)
+		results <- stageResult{name: "extract backup", err: extractTar(zstdOut, stagePath)}
 	}()
 
-	copyErr := <-copyDone
-	extractErr := <-extractDone
+	var firstErr error
+	for remaining := 2; remaining > 0; remaining-- {
+		result := <-results
+		if result.err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", result.name, result.err)
+			_ = zstdIn.Close()
+			_ = ageOut.Close()
+			_ = zstdOut.Close()
+			_ = ageCmd.Process.Kill()
+			_ = zstdCmd.Process.Kill()
+		}
+	}
 
 	ageWaitErr := ageCmd.Wait()
 	zstdWaitErr := zstdCmd.Wait()
 
-	if copyErr != nil {
+	if firstErr != nil {
 		_ = os.RemoveAll(stagePath)
-		return "", fmt.Errorf("decrypt backup stream: %w", copyErr)
-	}
-	if extractErr != nil {
-		_ = os.RemoveAll(stagePath)
-		return "", fmt.Errorf("extract backup: %w", extractErr)
+		return "", firstErr
 	}
 	if zstdWaitErr != nil {
 		_ = os.RemoveAll(stagePath)
