@@ -1,6 +1,7 @@
 package cryptomator
 
 import (
+	"io"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -61,13 +62,6 @@ func (c *Client) Unlock() error {
 		return fmt.Errorf("create runtime directory: %w", err)
 	}
 
-	logPath := filepath.Join(c.cfg.RuntimeDir, "cryptomator.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return fmt.Errorf("create Cryptomator log: %w", err)
-	}
-	defer logFile.Close()
-
 	cmd := exec.Command(
 		c.cfg.CLIPath,
 		"unlock",
@@ -76,8 +70,8 @@ func (c *Client) Unlock() error {
 		"--mountPoint="+c.cfg.MountPoint,
 		c.cfg.VaultPath,
 	)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	cryptStdin, err := cmd.StdinPipe()
@@ -102,7 +96,7 @@ func (c *Client) Unlock() error {
 		"-w",
 	)
 	security.Stdout = cryptStdin
-	security.Stderr = logFile
+	security.Stderr = io.Discard
 
 	if err := security.Run(); err != nil {
 		_ = cryptStdin.Close()
@@ -131,7 +125,7 @@ func (c *Client) Unlock() error {
 
 		select {
 		case <-waitDone:
-			return fmt.Errorf("Cryptomator CLI exited before mounting; see %s", logPath)
+			return fmt.Errorf("Cryptomator CLI exited before mounting")
 		default:
 		}
 		time.Sleep(250 * time.Millisecond)
