@@ -210,6 +210,8 @@ func helpText() string {
 
 Usage:
   edrive setup
+  edrive remove
+  edrive purge
   edrive doctor
   edrive status
   edrive unlock
