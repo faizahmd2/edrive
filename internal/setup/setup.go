@@ -139,7 +139,7 @@ func chooseWorkspace(cfg *config.Config) (bool, error) {
 
 	for {
 		fmt.Println()
-		fmt.Println("Step 1/4: choose the folder where you will see your decrypted edrive files.")
+		fmt.Println("Step 2/4: choose the folder where you will see your decrypted edrive files.")
 		fmt.Println("Choose an empty folder. edrive will mount the workspace there.")
 		path, selected, err := ui.ChooseFolder("Choose edrive working folder", defaultDir)
 		if err != nil {
@@ -225,6 +225,8 @@ func ensureGoogleDriveRoot() (string, error) {
 	}
 	if len(candidates) > 1 {
 		fmt.Println()
+		fmt.Println("Step 3/4: choose which local Google Drive My Drive edrive should use.")
+		fmt.Println()
 		fmt.Println("I found more than one local Google Drive My Drive.")
 		for _, candidate := range candidates {
 			fmt.Println(" ", candidate)
@@ -245,10 +247,37 @@ func ensureGoogleDriveRoot() (string, error) {
 	}
 
 	fmt.Println()
-	fmt.Println("Google Drive is installed, but its local My Drive folder is not visible.")
-	fmt.Println("The next step will open Google Drive.")
-	fmt.Println("Make your My Drive files available locally. Mirroring is fine; streaming is also fine.")
-	fmt.Println("Do not move or rename any existing edrive data.")
+	fmt.Println("Step 3/4: connect edrive to your local Google Drive files.")
+	fmt.Println()
+	fmt.Println("If Google Drive My Drive is already available locally (for example, mirror mode), I can use that folder now.")
+	fmt.Println("If it is not available yet, I will open Google Drive and guide you through making it available.")
+	fmt.Println()
+	already, err := ui.Confirm("Is your Google Drive My Drive folder already available locally?")
+	if err != nil {
+		return "", err
+	}
+	if already {
+		path, selected, err := ui.ChooseFolder("Choose your local Google Drive My Drive folder", config.Home())
+		if err != nil {
+			return "", err
+		}
+		if selected {
+			path = provider.NormalizeRoot(path)
+			if isDir(path) {
+				return path, nil
+			}
+			fmt.Println("That folder is not available. I will open Google Drive instead.")
+		} else {
+			fmt.Println("No folder selected. I will open Google Drive instead.")
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("Before I open Google Drive:")
+	fmt.Println("  1. Make sure you are signed in.")
+	fmt.Println("  2. Make My Drive available locally.")
+	fmt.Println("  3. You may use mirror mode or streaming mode.")
+	fmt.Println("  4. Wait until the local folder is visible in Finder.")
 	fmt.Println()
 	if err := provider.EnsureRunning(); err != nil {
 		return "", fmt.Errorf("open Google Drive: %w", err)
