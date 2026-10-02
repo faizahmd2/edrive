@@ -1,12 +1,16 @@
 package ui
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+var input = bufio.NewReader(os.Stdin)
 
 func Open(path string) error {
 	if path == "" {
@@ -22,16 +26,16 @@ func OpenApplication(name string) error {
 func ChooseFolder(prompt, defaultDir string) (string, bool, error) {
 	defaultDir = filepath.Clean(defaultDir)
 
-	script := "tell application \"System Events\" to activate\n"
+	script := "tell application \\"System Events\\" to activate\n"
 	if isDir(defaultDir) {
 		script += fmt.Sprintf(
-			"set chosenFolder to choose folder with prompt \"%s\" default location POSIX file \"%s\"\n",
+			"set chosenFolder to choose folder with prompt \\"%s\\" default location POSIX file \\"%s\\" \n",
 			escapeAppleScript(prompt),
 			escapeAppleScript(defaultDir),
 		)
 	} else {
 		script += fmt.Sprintf(
-			"set chosenFolder to choose folder with prompt \"%s\"\n",
+			"set chosenFolder to choose folder with prompt \\"%s\\" \n",
 			escapeAppleScript(prompt),
 		)
 	}
@@ -44,7 +48,6 @@ func ChooseFolder(prompt, defaultDir string) (string, bool, error) {
 		}
 		return "", false, fmt.Errorf("choose folder: %w", err)
 	}
-
 	path := strings.TrimSpace(string(out))
 	if path == "" {
 		return "", false, fmt.Errorf("no folder selected")
@@ -53,7 +56,47 @@ func ChooseFolder(prompt, defaultDir string) (string, bool, error) {
 }
 
 func ShellInitZsh() string {
-	return "# >>> edrive shell integration >>>\nedrive() {\n  if [[ \"$1\" == \"cd\" ]]; then\n    shift\n    if (( $# > 0 )); then\n      echo \"edrive cd does not accept arguments\" >&2\n      return 2\n    fi\n    local dir\n    dir=$(\"$HOME/.local/bin/edrive\" cd) || return\n    builtin cd -- \"$dir\"\n    return\n  fi\n  \"$HOME/.local/bin/edrive\" \"$@\"\n}\n# <<< edrive shell integration <<<\n"
+	return "# >>> edrive shell integration >>>\n" +
+		"edrive() {\n" +
+		"  if [[ \\"$1\\" == \\"cd\\" ]]; then\n" +
+		"    shift\n" +
+		"    if (( $# > 0 )); then\n" +
+		"      echo \\"edrive cd does not accept arguments\\" >&2\n" +
+		"      return 2\n" +
+		"    fi\n" +
+		"    local dir\n" +
+		"    dir=(\\"$HOME/.local/bin/edrive\\" cd) || return\n" +
+		"    builtin cd -- \\"$dir\\"\n" +
+		"    return\n" +
+		"  fi\n" +
+		"  \\"$HOME/.local/bin/edrive\\" \\"$@\\" \n" +
+		"}\n" +
+		"# <<< edrive shell integration <<<\n"
+}
+
+func Confirm(prompt string) (bool, error) {
+	fmt.Print(prompt + " [y/N] ")
+	line, err := input.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true, nil
+	case "", "n", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("please answer yes or no")
+	}
+}
+
+func Pause(prompt string) error {
+	fmt.Print(prompt)
+	_, err := input.ReadString('\n')
+	if err == io.EOF {
+		return nil
+	}
+	return err
 }
 
 func isDir(path string) bool {
@@ -64,20 +107,4 @@ func isDir(path string) bool {
 func escapeAppleScript(value string) string {
 	value = strings.ReplaceAll(value, "\\", "\\\\")
 	return strings.ReplaceAll(value, "\"", "\\\"")
-}
-
-func Confirm(prompt string) (bool, error) {
-	fmt.Print(prompt + " [y/N] ")
-	var answer string
-	if _, err := fmt.Fscan(os.Stdin, &answer); err != nil {
-		return false, err
-	}
-	switch strings.ToLower(strings.TrimSpace(answer)) {
-	case "y", "yes":
-		return true, nil
-	case "", "n", "no":
-		return false, nil
-	default:
-		return false, fmt.Errorf("please answer yes or no")
-	}
 }
