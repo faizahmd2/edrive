@@ -12,56 +12,19 @@ import (
 
 	"github.com/faiz/edrive/internal/config"
 	"github.com/faiz/edrive/internal/cryptomator"
+	"github.com/faiz/edrive/internal/keychain"
+	"github.com/faiz/edrive/internal/provider"
 	"github.com/faiz/edrive/internal/snapshot"
-	"github.com/faiz/edrive/internal/storage"
-	"github.com/faiz/edrive/internal/util"
+	"github.com/faiz/edrive/internal/ui"
+)
+
+const (
+	ageVersion  = "1.3.2"
+	zstdVersion = "1.5.7"
 )
 
 type App struct {
 	Config config.Config
-}
-
-func vaultAvailable(mountPath string) bool {
-	mountPath = filepath.Clean(mountPath)
-
-	cmd := exec.Command("mount")
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-
-	marker := " on " + mountPath + " ("
-
-	for _, line := range strings.Split(string(output), "\n") {
-		if strings.Contains(line, marker) {
-			entries, err := os.ReadDir(mountPath)
-			return err == nil && entries != nil
-		}
-	}
-
-	return false
-}
-
-func loadRecipients(path string) (int, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !strings.HasPrefix(line, "age1") {
-			return 0, fmt.Errorf("unsupported recipient in %s: %q", path, line)
-		}
-		count++
-	}
-	if count == 0 {
-		return 0, fmt.Errorf("no age recipients configured in %s", path)
-	}
-	return count, nil
 }
 
 func (a App) Doctor() error {
@@ -75,96 +38,44 @@ func (a App) Doctor() error {
 	}
 	var checks []check
 
-	cfgModeOK := false
-	if info, err := os.Stat(a.Config.ConfigPath); err == nil {
-		cfgModeOK = info.Mode().Perm()&0077 == 0
-	}
+	configOK := a.Config.ConfigFound && fileMode0600(a.Config.ConfigPath)
 	configDetail := a.Config.ConfigPath
 	if !a.Config.ConfigFound {
 		configDetail = "not configured"
-	} else if !cfgModeOK {
+	} else if !fileMode0600(a.Config.ConfigPath) {
 		configDetail = "permissions should be 0600"
 	}
-	checks = append(checks, check{"Config", a.Config.ConfigFound && cfgModeOK, configDetail})
-	if a.Config.DataRoot != "" {
-		checks = append(checks, check{"Data root", isDir(a.Config.DataRoot), a.Config.DataRoot})
-	}
-	if a.Config.GoogleDriveRoot != "" {
-		checks = append(checks, check{"Google Drive root", isDir(a.Config.GoogleDriveRoot), a.Config.GoogleDriveRoot})
-	}
-	checks = append(checks, check{"Drive configuration", a.Config.GoogleDriveReady, "mirrored local folder recorded"})
-	if a.Config.Mount != "" {
-		checks = append(checks, check{"Mount path", isDir(a.Config.Mount), a.Config.Mount})
-	}
-	if a.Config.RecoveryDir != "" {
-		checks = append(checks, check{"Recovery dir", isDir(a.Config.RecoveryDir), a.Config.RecoveryDir})
-	}
-	if a.Config.Recipients != "" {
-		n, err := loadRecipients(a.Config.Recipients)
+	checks = append(checks, check{"Config", configOK, configDetail})
+
+	dataOK := isDir(a.Config.DataRoot)
+	checks = append(checks, check{"Workspace", dataOK, a.Config.DataRoot})
+
+	if runtime.GOOS == "darwin" {
+		driveRoot, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
 		if err != nil {
-			checks = append(checks, check{"Recipients", false, err.Error()})
+			checks = append(checks, check{"Google Drive", false, "local storage unavailable"})
 		} else {
-			checks = append(checks, check{"Recipients", true, fmt.Sprintf("%d recipient(s)", n)})
+			checks = append(checks, check{"Google Drive", true, driveRoot})
+			vault := filepath.Join(driveRoot, a.Config.StorageName)
+			checks = append(checks, check{"Encrypted vault", isFile(filepath.Join(vault, "vault.cryptomator")), vault})
+			if _, err := cryptomator.DiscoverVaultID(vault); err != nil {
+				checks = append(checks, check{"Cryptomator registration", false, "vault is not registered"})
+			} else {
+				checks = append(checks, check{"Cryptomator registration", true, "ready"})
+			}
 		}
-	}
-	if a.Config.MacIdentity != "" {
-		err := validateAgeIdentity(a.Config.MacIdentity)
-		checks = append(checks, check{"Mac identity", err == nil, detailPathOrError(a.Config.MacIdentity, err)})
-	}
-	if a.Config.RecoveryIdentity != "" {
-		err := validateAgeIdentity(a.Config.RecoveryIdentity)
-		if err != nil {
-			checks = append(checks, check{"Recovery identity", false, "not available: " + a.Config.RecoveryIdentity})
-		} else {
-			checks = append(checks, check{"Recovery identity", true, a.Config.RecoveryIdentity})
-		}
+		checks = append(checks, check{"Google Drive app", isDir("/Applications/Google Drive.app"), "/Applications/Google Drive.app"})
+		checks = append(checks, check{"FUSE-T", brewCaskInstalled("fuse-t"), "installed"})
 	}
 
-	checks = append(checks, check{"age", binaryAvailable("age"), binaryDetail("age")})
-	checks = append(checks, check{"zstd", binaryAvailable("zstd"), binaryDetail("zstd")})
-	checks = append(checks, check{"FUSE-T", caskOrAppAvailable("fuse-t", nil), binaryOrAppDetail("fuse-t", nil)})
-	checks = append(checks, check{"Google Drive", caskOrAppAvailable("google-drive", []string{"/Applications/Google Drive.app"}), binaryOrAppDetail("google-drive", []string{"/Applications/Google Drive.app"})})
-	if a.Config.GoogleDriveRoot != "" && isDir(a.Config.GoogleDriveRoot) {
-		running := processRunning("Google Drive")
-		checks = append(checks, check{"Drive process", running, "running"})
-		if !running {
-			checks[len(checks)-1].detail = "not running"
-		}
-	}
+	checks = append(checks, toolCheck("age", a.Config.AgePath, ageVersion))
+	checks = append(checks, toolCheck("zstd", a.Config.ZstdPath, zstdVersion))
+	checks = append(checks, check{"Cryptomator CLI", isExecutableFile(a.Config.CryptomatorCLI), a.Config.CryptomatorCLI})
 
-	cliOK := isExecutableFile(a.Config.CryptomatorCLI)
-	cliDetail := a.Config.CryptomatorCLI
-	if a.Config.CryptomatorCLI == "" {
-		cliDetail = "not configured"
-	}
-	checks = append(checks, check{"Cryptomator CLI", cliOK, cliDetail})
-
-	vaultOK := isDir(a.Config.CryptomatorVault)
-	vaultDetail := a.Config.CryptomatorVault
-	if a.Config.CryptomatorVault == "" {
-		vaultDetail = "not configured"
-	}
-	checks = append(checks, check{"Cryptomator vault", vaultOK, vaultDetail})
-
-	vaultIDOK := strings.TrimSpace(a.Config.CryptomatorVaultID) != ""
-	vaultIDDetail := a.Config.CryptomatorVaultID
-	if !vaultIDOK {
-		vaultIDDetail = "not registered/configured"
-	}
-	checks = append(checks, check{"Vault ID", vaultIDOK, vaultIDDetail})
-
-	mounterOK := strings.TrimSpace(a.Config.CryptomatorMounter) != ""
-	checks = append(checks, check{"FUSE mounter", mounterOK, a.Config.CryptomatorMounter})
-
-	if vaultIDOK && runtime.GOOS == "darwin" {
-		err := exec.Command(
-			"/usr/bin/security",
-			"find-generic-password",
-			"-s", a.Config.CryptomatorKeychainService,
-			"-a", a.Config.CryptomatorVaultID,
-		).Run()
-		checks = append(checks, check{"Keychain item", err == nil, "Cryptomator vault credential"})
-	}
+	recipientCount, recErr := loadRecipients(a.Config.Recipients)
+	checks = append(checks, check{"Recipients", recErr == nil, fmt.Sprintf("%d recipient(s)", recipientCount)})
+	checks = append(checks, check{"Device identity", keychain.Exists(keychain.DeviceIdentity), "macOS Keychain"})
+	checks = append(checks, check{"Recovery identity", keychain.Exists(keychain.RecoveryIdentity), "macOS Keychain"})
 
 	all := true
 	for _, c := range checks {
@@ -173,7 +84,8 @@ func (a App) Doctor() error {
 			mark = "✗"
 			all = false
 		}
-		fmt.Printf("%-20s %s  %s\n", c.name, mark, c.detail)
+		fmt.Printf("%-23s %s  %s
+", c.name, mark, c.detail)
 	}
 
 	fmt.Println()
@@ -184,447 +96,526 @@ func (a App) Doctor() error {
 	return fmt.Errorf("doctor found one or more problems")
 }
 
-func isDir(path string) bool {
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
-func isExecutableFile(path string) bool {
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
-}
-
-func binaryAvailable(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
-}
-
-func binaryDetail(name string) string {
-	if path, err := exec.LookPath(name); err == nil {
-		return path
-	}
-	return "not installed"
-}
-
-func caskOrAppAvailable(cask string, appPaths []string) bool {
-	if len(appPaths) > 0 {
-		for _, path := range appPaths {
-			if isDir(path) {
-				return true
-			}
-		}
-		return false
-	}
-	if _, err := exec.LookPath("brew"); err == nil {
-		return exec.Command("brew", "list", "--cask", cask).Run() == nil
-	}
-	return false
-}
-
-func binaryOrAppDetail(name string, appPaths []string) string {
-	if len(appPaths) > 0 {
-		for _, path := range appPaths {
-			if isDir(path) {
-				return path
-			}
-		}
-		return "not installed"
-	}
-	if _, err := exec.LookPath("brew"); err == nil {
-		if err := exec.Command("brew", "list", "--cask", name).Run(); err == nil {
-			return "installed"
-		}
-	}
-	return "not installed"
-}
-
-func processRunning(name string) bool {
-	return exec.Command("pgrep", "-f", name).Run() == nil
-}
-
-func validateAgeIdentity(path string) error {
-	if path == "" {
-		return fmt.Errorf("not configured")
-	}
-	if _, err := os.Stat(path); err != nil {
-		return err
-	}
-	return exec.Command("age-keygen", "-y", path).Run()
-}
-
-func detailPathOrError(path string, err error) string {
-	if err == nil {
-		return path
-	}
-	return err.Error()
-}
-
 func (a App) Status() error {
-	fmt.Printf("data root:  %s\n", a.Config.DataRoot)
-	fmt.Printf("drive root: %s\n", a.Config.GoogleDriveRoot)
-	fmt.Printf("mount:      %s\n", a.Config.Mount)
+	fmt.Println("EDRIVE STATUS")
+	fmt.Println()
+	fmt.Printf("Workspace: %s
+", a.Config.DataRoot)
+	fmt.Printf("State:     %s
+", workspaceState(a.Config.DataRoot))
 
-	if runtime.GOOS == "darwin" {
-		if caskOrAppAvailable("google-drive", []string{"/Applications/Google Drive.app"}) {
-			fmt.Println("Google Drive: installed")
-		} else {
-			fmt.Println("Google Drive: missing")
-		}
-	}
-
-	if !isDir(a.Config.Mount) || !vaultAvailable(a.Config.Mount) {
-		fmt.Println("state:      LOCKED / unavailable")
+	storageRoot, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
+	if err != nil {
+		fmt.Println("Storage:   unavailable")
 	} else {
-		fmt.Println("state:      UNLOCKED / available")
+		fmt.Println("Storage:   Google Drive")
+		fmt.Printf("Vault:     %s
+", filepath.Join(storageRoot, a.Config.StorageName))
 	}
 
-	fmt.Printf("recovery:   %s\n", a.Config.RecoveryDir)
-	fmt.Printf("recipients: %s\n", a.Config.Recipients)
-
-	if !isDir(a.Config.RecoveryDir) {
-		fmt.Println("snapshots:  0")
-		fmt.Println("latest:     none")
-		return nil
-	}
-
-	entries, err := os.ReadDir(a.Config.RecoveryDir)
-	if err != nil {
-		return err
-	}
-	count := 0
-	var latest os.DirEntry
-	var latestMod time.Time
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".tar.zst.age") {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		count++
-		if latest == nil || info.ModTime().After(latestMod) {
-			latest = entry
-			latestMod = info.ModTime()
-		}
-	}
-	fmt.Printf("snapshots:  %d\n", count)
-	if latest != nil {
-		fmt.Printf("latest:     %s\n", latest.Name())
+	if a.Config.LastBackupDir == "" {
+		fmt.Println("Backups:   no previous destination")
 	} else {
-		fmt.Println("latest:     none")
+		fmt.Printf("Backups:   %s
+", a.Config.LastBackupDir)
+	}
+
+	fmt.Println()
+	return nil
+}
+
+func (a App) Open() error {
+	if err := a.ensureUnlocked(); err != nil {
+		return err
+	}
+	if err := ui.Open(a.Config.DataRoot); err != nil {
+		return err
 	}
 	return nil
 }
 
-func (a App) Backup() error {
-	if err := util.RequireBinary("age"); err != nil {
+func (a App) CD() error {
+	if err := a.ensureUnlocked(); err != nil {
 		return err
 	}
-	if err := util.RequireBinary("zstd"); err != nil {
-		return err
-	}
-	if !vaultAvailable(a.Config.Mount) {
-		return fmt.Errorf("vault is not unlocked at %s", a.Config.Mount)
-	}
-	if _, err := loadRecipients(a.Config.Recipients); err != nil {
-		return err
-	}
-	store, err := storage.NewLocal(a.Config.RecoveryDir)
-	if err != nil {
-		return err
-	}
-
-	m, err := snapshot.BuildManifest(a.Config.Mount)
-	if err != nil {
-		return err
-	}
-	ts := time.Now().UTC().Format("20060102-150405")
-	name := "edrive-recovery-" + ts + ".tar.zst.age"
-	fmt.Printf("Creating snapshot...\nFiles: %d\n", len(m.Files))
-	if err := store.Write(name, func(w io.Writer) error {
-		return snapshot.CreateEncryptedSnapshot(a.Config.Mount, a.Config.Recipients, m, w)
-	}); err != nil {
-		return err
-	}
-	obj := filepath.Join(a.Config.RecoveryDir, name)
-	info, err := os.Stat(obj)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Snapshot:   %s\n", obj)
-	fmt.Printf("Encrypted:  %s\n", formatBytes(info.Size()))
-	fmt.Println("Status:     CREATED")
-	return pruneSnapshots(store, a.Config.SnapshotKeep)
-}
-
-func (a App) Backups() error {
-	store, err := storage.NewLocal(a.Config.RecoveryDir)
-	if err != nil {
-		return err
-	}
-	objects, err := store.List(".tar.zst.age")
-	if err != nil {
-		return err
-	}
-	if len(objects) == 0 {
-		fmt.Println("No snapshots.")
-		return nil
-	}
-	for _, obj := range objects {
-		fmt.Printf("%s  %s  %s\n", obj.ModTime.UTC().Format(time.RFC3339), formatBytes(obj.Size), filepath.Join(a.Config.RecoveryDir, obj.Name))
-	}
-	return nil
-}
-
-func (a App) Verify(path, identity string) error {
-	if err := util.RequireBinary("age"); err != nil {
-		return err
-	}
-	if err := util.RequireBinary("zstd"); err != nil {
-		return err
-	}
-	store, err := storage.NewLocal(a.Config.RecoveryDir)
-	if err != nil {
-		return err
-	}
-	name, err := resolveSnapshot(store, path)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(identity) == "" {
-		return fmt.Errorf("recovery identity required: use --identity /path/to/identity")
-	}
-	if _, err := os.Stat(identity); err != nil {
-		return fmt.Errorf("identity not found: %w", err)
-	}
-	plain, err := store.Open(name)
-	if err != nil {
-		return err
-	}
-	defer plain.Close()
-	manifest, err := snapshot.ReadAndVerifyArchive(plain, identity, "", false)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Verified:   %s\n", filepath.Join(a.Config.RecoveryDir, name))
-	fmt.Printf("Files:      %d\n", len(manifest.Files))
-	fmt.Printf("Created:    %s\n", manifest.CreatedAt.Format(time.RFC3339))
-	fmt.Println("Integrity:  OK")
-	return nil
-}
-
-func (a App) Restore(path, identity, output string) error {
-	if err := util.RequireBinary("age"); err != nil {
-		return err
-	}
-	if err := util.RequireBinary("zstd"); err != nil {
-		return err
-	}
-	store, err := storage.NewLocal(a.Config.RecoveryDir)
-	if err != nil {
-		return err
-	}
-	name, err := resolveSnapshot(store, path)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(identity) == "" {
-		return fmt.Errorf("identity required: use --identity /path/to/identity")
-	}
-	if _, err := os.Stat(identity); err != nil {
-		return fmt.Errorf("identity not found: %w", err)
-	}
-	if output == "" {
-		return fmt.Errorf("restore output directory is required: use --output DIR")
-	}
-	if filepath.Clean(output) == filepath.Clean(a.Config.Mount) {
-		return fmt.Errorf("refusing to restore over live mount")
-	}
-	plain, err := store.Open(name)
-	if err != nil {
-		return err
-	}
-	defer plain.Close()
-	manifest, err := snapshot.ReadAndVerifyArchive(plain, identity, output, true)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Restored:   %s\n", output)
-	fmt.Printf("Files:      %d\n", len(manifest.Files))
-	fmt.Println("Integrity:  OK")
+	fmt.Println(a.Config.DataRoot)
 	return nil
 }
 
 func (a App) Unlock() error {
-	if runtime.GOOS == "darwin" && !caskOrAppAvailable("google-drive", []string{"/Applications/Google Drive.app"}) {
-		return fmt.Errorf("Google Drive for desktop is not installed")
+	if err := a.ensureUnlocked(); err != nil {
+		return err
 	}
-	if vaultAvailable(a.Config.Mount) {
-		fmt.Printf("Vault already unlocked: %s\n", a.Config.Mount)
+	fmt.Printf("Workspace opened: %s
+", a.Config.DataRoot)
+	return nil
+}
+
+func (a App) ensureUnlocked() error {
+	if mounted(a.Config.DataRoot) {
 		return nil
 	}
 
-	client := cryptomator.New(cryptomator.Config{
-		VaultPath:       a.Config.CryptomatorVault,
-		VaultID:         a.Config.CryptomatorVaultID,
-		CLIPath:         a.Config.CryptomatorCLI,
-		MountPoint:      a.Config.Mount,
-		Mounter:         a.Config.CryptomatorMounter,
-		KeychainService: a.Config.CryptomatorKeychainService,
-		RuntimeDir:      a.Config.RuntimeDir,
-	})
+	storageRoot, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
+	if err != nil {
+		return fmt.Errorf("Google Drive storage is unavailable")
+	}
+	vaultPath := filepath.Join(storageRoot, a.Config.StorageName)
+	if _, err := os.Stat(filepath.Join(vaultPath, "vault.cryptomator")); err != nil {
+		return fmt.Errorf("encrypted workspace is unavailable")
+	}
+	if !isExecutableFile(a.Config.CryptomatorCLI) {
+		return fmt.Errorf("Cryptomator CLI is unavailable")
+	}
 
+	client := cryptomator.New(cryptomator.Config{
+		VaultPath:  vaultPath,
+		MountPoint: a.Config.DataRoot,
+		CLIPath:    a.Config.CryptomatorCLI,
+		RuntimeDir: config.DefaultRuntimeDir(),
+	})
 	if err := client.Unlock(); err != nil {
 		return err
 	}
-
-	fmt.Printf("Vault unlocked: %s\n", a.Config.Mount)
 	return nil
 }
 
-func (a App) Lock() error {
-	if !vaultAvailable(a.Config.Mount) {
-		fmt.Println("Vault already locked.")
+func (a App) Close() error {
+	if !mounted(a.Config.DataRoot) {
+		fmt.Println("Workspace already closed.")
 		return nil
 	}
 
-	client := cryptomator.New(cryptomator.Config{
-		VaultPath:       a.Config.CryptomatorVault,
-		VaultID:         a.Config.CryptomatorVaultID,
-		CLIPath:         a.Config.CryptomatorCLI,
-		MountPoint:      a.Config.Mount,
-		Mounter:         a.Config.CryptomatorMounter,
-		KeychainService: a.Config.CryptomatorKeychainService,
-		RuntimeDir:      a.Config.RuntimeDir,
-	})
+	storageRoot, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
+	if err != nil {
+		return err
+	}
+	vaultPath := filepath.Join(storageRoot, a.Config.StorageName)
 
+	client := cryptomator.New(cryptomator.Config{
+		VaultPath:  vaultPath,
+		MountPoint: a.Config.DataRoot,
+		CLIPath:    a.Config.CryptomatorCLI,
+		RuntimeDir: config.DefaultRuntimeDir(),
+	})
 	if err := client.Lock(); err != nil {
 		return err
 	}
-
-	fmt.Println("Vault locked.")
+	fmt.Println("Workspace closed.")
 	return nil
 }
 
-func GenerateIdentity(path string) error {
+func (a App) Backup() error {
+	if err := a.requireTools(); err != nil {
+		return err
+	}
+
+	fmt.Println("Requesting secure recovery access...")
+	recoveryIdentity, err := keychain.Get(keychain.RecoveryIdentity)
+	if err != nil {
+		return err
+	}
+
+	if err := a.ensureUnlocked(); err != nil {
+		return err
+	}
+
+	defaultDir := a.Config.LastBackupDir
+	if !isDir(defaultDir) {
+		defaultDir = a.Config.DataRoot
+	}
+	destination, selected, err := ui.ChooseFolder("Choose where to save this edrive backup", defaultDir)
+	if err != nil {
+		return err
+	}
+	if !selected {
+		fmt.Println("Backup cancelled.")
+		return nil
+	}
+
+	if err := os.MkdirAll(config.DefaultTempDir(), 0700); err != nil {
+		return err
+	}
+	staging, err := os.MkdirTemp(config.DefaultTempDir(), ".backup-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staging)
+
+	manifest, err := snapshot.BuildManifest(a.Config.DataRoot)
+	if err != nil {
+		return err
+	}
+
+	archivePath := filepath.Join(staging, "backup.tar.zst.age")
+	archive, err := os.OpenFile(archivePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	createErr := snapshot.CreateEncryptedSnapshot(
+		a.Config.DataRoot,
+		a.Config.Recipients,
+		a.Config.AgePath,
+		a.Config.ZstdPath,
+		manifest,
+		archive,
+	)
+	syncErr := error(nil)
+	closeErr := archive.Close()
+	if createErr == nil {
+		syncErr = syncFile(archivePath)
+	}
+	if createErr != nil {
+		return createErr
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+
+	if err := withIdentityFile(recoveryIdentity, func(identityPath string) error {
+		f, err := os.Open(archivePath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = snapshot.ReadAndVerifyArchive(
+			f,
+			identityPath,
+			a.Config.AgePath,
+			a.Config.ZstdPath,
+			"",
+			false,
+		)
+		return err
+	}); err != nil {
+		return fmt.Errorf("verify backup: %w", err)
+	}
+
+	packageDir, err := createBackupPackage(destination)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.RemoveAll(packageDir)
+		}
+	}()
+
+	finalArchive := filepath.Join(packageDir, "backup.tar.zst.age")
+	if err := copyFile(archivePath, finalArchive, 0600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "recovery-key.txt"), []byte(recoveryIdentity+"
+"), 0600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "README.txt"), []byte(backupReadme), 0600); err != nil {
+		return err
+	}
+	if err := syncDir(packageDir); err != nil {
+		return err
+	}
+
+	a.Config.LastBackupDir = destination
+	if err := a.Config.Save(); err != nil {
+		return err
+	}
+
+	committed = true
+	_ = ui.Open(packageDir)
+
+	info, err := os.Stat(finalArchive)
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Printf("Backup saved: %s
+", packageDir)
+	fmt.Printf("Files:        %d
+", len(manifest.Files))
+	fmt.Printf("Encrypted:    %s
+", formatBytes(info.Size()))
+	return nil
+}
+
+func (a App) Restore() error {
+	if err := a.requireTools(); err != nil {
+		return err
+	}
+
+	defaultDir := a.Config.LastBackupDir
+	if !isDir(defaultDir) {
+		defaultDir = config.DefaultDataRoot()
+	}
+	backupDir, selected, err := ui.ChooseFolder("Choose an edrive backup folder", defaultDir)
+	if err != nil {
+		return err
+	}
+	if !selected {
+		fmt.Println("Restore cancelled.")
+		return nil
+	}
+
+	archivePath := filepath.Join(backupDir, "backup.tar.zst.age")
+	recoveryKeyPath := filepath.Join(backupDir, "recovery-key.txt")
+	if !isFile(archivePath) {
+		return fmt.Errorf("selected folder does not contain an edrive backup")
+	}
+
+	recoveryIdentity, err := keychain.Get(keychain.RecoveryIdentity)
+	if err != nil {
+		if !isFile(recoveryKeyPath) {
+			return err
+		}
+		b, readErr := os.ReadFile(recoveryKeyPath)
+		if readErr != nil {
+			return readErr
+		}
+		recoveryIdentity = strings.TrimSpace(string(b))
+		if recoveryIdentity == "" {
+			return fmt.Errorf("backup recovery key is empty")
+		}
+		if setErr := keychain.Set(keychain.RecoveryIdentity, recoveryIdentity); setErr != nil {
+			return setErr
+		}
+	}
+
+	restoreRoot, selected, err := ui.ChooseFolder(
+		"Choose an empty folder to restore the backup into",
+		filepath.Join(config.DefaultDataRoot(), "restore"),
+	)
+	if err != nil {
+		return err
+	}
+	if !selected {
+		fmt.Println("Restore cancelled.")
+		return nil
+	}
+
+	return withIdentityFile(recoveryIdentity, func(identityPath string) error {
+		f, err := os.Open(archivePath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		manifest, err := snapshot.ReadAndVerifyArchive(
+			f,
+			identityPath,
+			a.Config.AgePath,
+			a.Config.ZstdPath,
+			restoreRoot,
+			true,
+		)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Restored: %s
+", restoreRoot)
+		fmt.Printf("Files:    %d
+", len(manifest.Files))
+		fmt.Println("Integrity: OK")
+		return nil
+	})
+}
+
+func (a App) requireTools() error {
+	if !toolVersionMatches(a.Config.AgePath, ageVersion) {
+		return fmt.Errorf("edrive requires age %s", ageVersion)
+	}
+	if !toolVersionMatches(a.Config.ZstdPath, zstdVersion) {
+		return fmt.Errorf("edrive requires zstd %s", zstdVersion)
+	}
+	if !isExecutableFile(a.Config.CryptomatorCLI) {
+		return fmt.Errorf("Cryptomator CLI is unavailable")
+	}
+	if _, err := loadRecipients(a.Config.Recipients); err != nil {
+		return err
+	}
+	return nil
+}
+
+func workspaceState(path string) string {
+	if mounted(path) {
+		return "OPEN"
+	}
+	return "CLOSED"
+}
+
+func mounted(path string) bool {
 	if path == "" {
-		return fmt.Errorf("output path required")
+		return false
 	}
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("refusing to overwrite existing identity: %s", path)
+	out, err := exec.Command("mount").Output()
+	if err != nil {
+		return false
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	cmd := exec.Command("age-keygen", "-pq", "-o", path)
-	cmd.Stdin = nil
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0600)
+	marker := " on " + filepath.Clean(path) + " ("
+	return strings.Contains(string(out), marker)
 }
 
-func PrintRecipient(path string) error {
-	cmd := exec.Command("age-keygen", "-y", path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+func loadRecipients(path string) (int, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, line := range strings.Split(string(b), "
+") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, "age1") {
+			return 0, fmt.Errorf("invalid age recipient")
+		}
+		count++
+	}
+	if count == 0 {
+		return 0, fmt.Errorf("no age recipients configured")
+	}
+	return count, nil
 }
 
-func AddRecipient(identityPath, recipientsPath string) error {
-	if _, err := os.Stat(identityPath); err != nil {
-		return err
+func toolCheck(name, path, version string) struct {
+	name   string
+	ok     bool
+	detail string
+} {
+	return struct {
+		name   string
+		ok     bool
+		detail string
+	}{name, toolVersionMatches(path, version), path}
+}
+
+func toolVersionMatches(path, version string) bool {
+	if !isExecutableFile(path) {
+		return false
 	}
-	if err := os.MkdirAll(filepath.Dir(recipientsPath), 0700); err != nil {
-		return err
+	out, err := exec.Command(path, "--version").CombinedOutput()
+	return err == nil && strings.Contains(string(out), version)
+}
+
+func fileMode0600(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0077 == 0
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
+}
+
+func brewCaskInstalled(name string) bool {
+	return exec.Command("brew", "list", "--cask", name).Run() == nil
+}
+
+func createBackupPackage(parent string) (string, error) {
+	base := time.Now().UTC().Format("20060102-150405")
+	for i := 0; i < 100; i++ {
+		name := "edrive-backup-" + base
+		if i > 0 {
+			name = fmt.Sprintf("edrive-backup-%s-%02d", base, i)
+		}
+		path := filepath.Join(parent, name)
+		if err := os.Mkdir(path, 0700); err == nil {
+			return path, nil
+		} else if !os.IsExist(err) {
+			return "", err
+		}
 	}
-	cmd := exec.Command("age-keygen", "-y", identityPath)
-	out, err := cmd.Output()
+	return "", fmt.Errorf("unable to create backup destination")
+}
+
+func withIdentityFile(identity, fn func(string) error) error {
+	tmpDir, err := os.MkdirTemp(config.DefaultTempDir(), ".identity-")
 	if err != nil {
 		return err
 	}
-	recipient := strings.TrimSpace(string(out))
-	if !strings.HasPrefix(recipient, "age1") {
-		return fmt.Errorf("unexpected age recipient output")
-	}
-	if existing, err := os.ReadFile(recipientsPath); err == nil {
-		for _, line := range strings.Split(string(existing), "\n") {
-			if strings.TrimSpace(line) == recipient {
-				return fmt.Errorf("recipient already exists in %s", recipientsPath)
-			}
-		}
-	} else if !os.IsNotExist(err) {
+	defer os.RemoveAll(tmpDir)
+
+	path := filepath.Join(tmpDir, "identity")
+	if err := os.WriteFile(path, []byte(identity+"
+"), 0600); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(recipientsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	return fn(path)
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if _, err := fmt.Fprintln(f, recipient); err != nil {
-		return err
-	}
-	return nil
-}
+	defer in.Close()
 
-func resolveSnapshot(store storage.Provider, path string) (string, error) {
-	objects, err := store.List(".tar.zst.age")
-	if err != nil {
-		return "", err
-	}
-	if path == "" {
-		if len(objects) == 0 {
-			return "", fmt.Errorf("no recovery snapshots found")
-		}
-		return objects[0].Name, nil
-	}
-	path = config.Expand(path)
-	name := filepath.Base(path)
-	if name != path && !filepath.IsAbs(path) {
-		name = filepath.Base(path)
-	}
-	if filepath.IsAbs(path) {
-		name = filepath.Base(path)
-	}
-	for _, obj := range objects {
-		if obj.Name == name {
-			return obj.Name, nil
-		}
-	}
-	return "", fmt.Errorf("snapshot not found: %s", path)
-}
-
-func pruneSnapshots(store storage.Provider, keep int) error {
-	objects, err := store.List(".tar.zst.age")
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}
-	for i := keep; i < len(objects); i++ {
-		if err := store.Remove(objects[i].Name); err != nil {
-			return fmt.Errorf("remove old snapshot %s: %w", objects[i].Name, err)
-		}
+	_, copyErr := io.Copy(out, in)
+	syncErr := error(nil)
+	if copyErr == nil {
+		syncErr = out.Sync()
 	}
-	return nil
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
 }
 
-func formatBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
+func syncFile(path string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY, 0600)
+	if err != nil {
+		return err
 	}
-	div, exp := int64(unit), 0
-	for n >= div*unit && exp < 4 {
-		div *= unit
-		exp++
+	err = f.Sync()
+	closeErr := f.Close()
+	if err != nil {
+		return err
 	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+	return closeErr
 }
+
+func syncDir(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	err = f.Sync()
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+const backupReadme = "edrive backup set
+
+This folder contains:
+- backup.tar.zst.age: the encrypted backup
+- recovery-key.txt: the private recovery identity required to decrypt it
+
+Keep both files together and protect this folder like a private secret.
+
+The recovery key is never printed by edrive during normal operation.
+"
