@@ -124,7 +124,7 @@ func Run() error {
 }
 
 func chooseDataRoot(cfg config.Config) (string, error) {
-	if cfg.ConfigFound && strings.TrimSpace(cfg.DataRoot) != "" {
+	if strings.TrimSpace(cfg.DataRoot) != "" && (cfg.ConfigFound || cfg.DataRoot != config.DefaultDataRoot()) {
 		fmt.Println("✓ reusing workspace:", cfg.DataRoot)
 		return cfg.DataRoot, nil
 	}
@@ -451,7 +451,11 @@ func ensureIdentities(cfg *config.Config) error {
 }
 
 func ensureIdentity(account, legacyPath, keygenPath string) (string, error) {
-	if value, err := keychain.Get(account); err == nil {
+	if keychain.Exists(account) {
+		value, err := keychain.Get(account)
+		if err != nil {
+			return "", fmt.Errorf("Keychain access for %s was denied", account)
+		}
 		return value, nil
 	}
 
