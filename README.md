@@ -55,7 +55,7 @@ Only the selected Google Drive local root and the selected edrive vault are reco
 
 An unrelated Cryptomator vault is left untouched. A foreign vault at the default `edrive` location causes setup to ask before adoption. If the user declines, setup asks for another location instead of overwriting the existing vault.
 
-The encrypted vault contains `.edrive-vault.json` as an ownership marker. The marker is itself inside the encrypted vault, so it is not part of the user's plaintext workspace.
+edrive keeps a small non-secret ownership binding in `~/.edrive/vault.json`. It records which vault path belongs to this edrive installation. The binding is deliberately outside the Cryptomator vault; it contains no recovery key, vault password, or encrypted file contents.
 
 ## Live workspace
 
