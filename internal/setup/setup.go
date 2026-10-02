@@ -211,8 +211,8 @@ func ensureAge() (string, error) {
 }
 
 func downloadAge() (string, error) {
-	url := "toolchain.AgeAssetURL"
-	expectedSHA := "e2020b073c44f692685a24d6abc378817eb81ffaaf49fd0531ef8565f767f2f5"
+	url := toolchain.AgeAssetURL
+	expectedSHA := toolchain.AgeAssetSHA256
 	targetDir := filepath.Join(config.DefaultToolsDir(), "age", toolchain.AgeVersion)
 
 	if err := os.MkdirAll(targetDir, 0700); err != nil {
@@ -306,7 +306,7 @@ func ensureCryptomatorCLI() (string, error) {
 }
 
 func downloadCryptomatorCLI() (string, error) {
-	url := "toolchain.CryptomatorCLIAssetURL"
+	url := toolchain.CryptomatorCLIAssetURL
 	targetDir := filepath.Join(config.DefaultToolsDir(), "cryptomator-cli", toolchain.CryptomatorCLIVersion)
 
 	if err := os.MkdirAll(targetDir, 0700); err != nil {
