@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 type Provider interface {
@@ -118,4 +119,3 @@ func unique(paths []string) []string {
 	return out
 }
 
-var _ = strings.TrimSpace
