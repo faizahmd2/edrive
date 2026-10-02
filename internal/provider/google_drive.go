@@ -17,7 +17,7 @@ type Provider interface {
 
 type GoogleDrive struct {
 	PreferredRoot string
-	StorageName  string
+	StorageName   string
 }
 
 func (p GoogleDrive) Name() string {
