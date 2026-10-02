@@ -10,24 +10,47 @@ import (
 )
 
 type Config struct {
-	Home                       string
-	Mount                      string
-	RecoveryDir                string
-	Recipients                 string
-	SnapshotKeep               int
-	CryptomatorVault           string
-	CryptomatorVaultID         string
-	CryptomatorCLI             string
-	CryptomatorMounter         string
-	CryptomatorKeychainService string
-	RuntimeDir                 string
+	ConfigPath                 string
+	ConfigFound                 bool
+	DataRoot                    string
+	GoogleDriveRoot             string
+	Mount                       string
+	RecoveryDir                 string
+	Recipients                  string
+	MacIdentity                 string
+	RecoveryIdentity            string
+	SnapshotKeep                int
+	CryptomatorVault            string
+	CryptomatorVaultID          string
+	CryptomatorCLI              string
+	CryptomatorMounter          string
+	CryptomatorKeychainService  string
+	RuntimeDir                  string
 }
-
-const defaultConfigRel = "Desktop/local-infra/edrive/config.sh"
 
 func DefaultPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, defaultConfigRel)
+	return filepath.Join(home, "Library/Application Support/edrive/config.sh")
+}
+
+func DefaultDataRoot() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "edrive")
+}
+
+func DefaultRuntimeDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library/Application Support/edrive/runtime")
+}
+
+func DefaultIdentityDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library/Application Support/edrive/identities")
+}
+
+func DefaultRecoveryIdentity() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "edrive-recovery-identity.txt")
 }
 
 func Expand(path string) string {
@@ -45,33 +68,59 @@ func Expand(path string) string {
 	return path
 }
 
-// Load accepts intentionally simple shell-style KEY=value lines. It does not
-// execute the config file or expand environment variables. Setup writes
-// absolute paths so the config remains machine-specific and unambiguous.
+// Load reads simple KEY=value configuration. It does not execute shell code
+// and does not expand environment variables. Missing configuration is allowed
+// so that "edrive doctor" can diagnose a fresh machine.
 func Load(path string) (Config, error) {
 	path = Expand(path)
 	if path == "" {
 		path = DefaultPath()
 	}
+
+	cfg := Config{
+		ConfigPath:                path,
+		DataRoot:                  DefaultDataRoot(),
+		RecoveryDir:               filepath.Join(DefaultDataRoot(), "recovery"),
+		GoogleDriveRoot:           filepath.Join(DefaultDataRoot(), "google-drive-remote"),
+		Mount:                     filepath.Join(DefaultDataRoot(), "edrive"),
+		Recipients:                filepath.Join(DefaultIdentityDir(), "recipients.txt"),
+		MacIdentity:               filepath.Join(DefaultIdentityDir(), "mac.identity"),
+		RecoveryIdentity:          DefaultRecoveryIdentity(),
+		SnapshotKeep:              20,
+		CryptomatorKeychainService: "Cryptomator",
+		RuntimeDir:                DefaultRuntimeDir(),
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
-		return Config{}, fmt.Errorf("config not found: %s: %w", path, err)
+		if os.IsNotExist(err) {
+			cfg.ConfigFound = false
+			cfg.CryptomatorVault = filepath.Join(cfg.GoogleDriveRoot, "edrive")
+			return cfg, nil
+		}
+		return Config{}, fmt.Errorf("open config %s: %w", path, err)
 	}
 	defer f.Close()
 
+	cfg.ConfigFound = true
+
 	values := map[string]string{}
 	allowed := map[string]bool{
-		"EDRIVE_HOME":                         true,
-		"EDRIVE_MOUNT":                        true,
-		"EDRIVE_RECOVERY_DIR":                 true,
-		"EDRIVE_RECIPIENTS":                   true,
-		"EDRIVE_SNAPSHOT_KEEP":                true,
-		"EDRIVE_CRYPTOMATOR_VAULT":            true,
-		"EDRIVE_CRYPTOMATOR_VAULT_ID":         true,
-		"EDRIVE_CRYPTOMATOR_CLI":              true,
-		"EDRIVE_CRYPTOMATOR_MOUNTER":          true,
+		"EDRIVE_DATA_ROOT":                  true,
+		"EDRIVE_HOME":                       true,
+		"EDRIVE_GOOGLE_DRIVE_ROOT":          true,
+		"EDRIVE_MOUNT":                      true,
+		"EDRIVE_RECOVERY_DIR":               true,
+		"EDRIVE_RECIPIENTS":                 true,
+		"EDRIVE_MAC_IDENTITY":               true,
+		"EDRIVE_RECOVERY_IDENTITY":          true,
+		"EDRIVE_SNAPSHOT_KEEP":              true,
+		"EDRIVE_CRYPTOMATOR_VAULT":          true,
+		"EDRIVE_CRYPTOMATOR_VAULT_ID":       true,
+		"EDRIVE_CRYPTOMATOR_CLI":            true,
+		"EDRIVE_CRYPTOMATOR_MOUNTER":        true,
 		"EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE": true,
-		"EDRIVE_RUNTIME_DIR":                  true,
+		"EDRIVE_RUNTIME_DIR":                true,
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -91,46 +140,12 @@ func Load(path string) (Config, error) {
 		}
 		values[key] = value
 	}
-
 	if err := scanner.Err(); err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
-	cfg := Config{
-		Home:                       Expand(values["EDRIVE_HOME"]),
-		Mount:                      Expand(values["EDRIVE_MOUNT"]),
-		RecoveryDir:                Expand(values["EDRIVE_RECOVERY_DIR"]),
-		Recipients:                 Expand(values["EDRIVE_RECIPIENTS"]),
-		CryptomatorVault:           Expand(values["EDRIVE_CRYPTOMATOR_VAULT"]),
-		CryptomatorVaultID:         strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_VAULT_ID"]),
-		CryptomatorCLI:             Expand(values["EDRIVE_CRYPTOMATOR_CLI"]),
-		CryptomatorMounter:         strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_MOUNTER"]),
-		CryptomatorKeychainService: strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE"]),
-		RuntimeDir:                 Expand(values["EDRIVE_RUNTIME_DIR"]),
-		SnapshotKeep:               20,
-	}
-
-	if cfg.CryptomatorKeychainService == "" {
-		cfg.CryptomatorKeychainService = "Cryptomator"
-	}
-	if cfg.RuntimeDir == "" {
-		home, _ := os.UserHomeDir()
-		cfg.RuntimeDir = filepath.Join(home, "Library/Application Support/edrive")
-	}
-	if cfg.Home == "" {
-		cfg.Home = filepath.Dir(path)
-	}
-
-	if cfg.CryptomatorVault == "" ||
-		cfg.CryptomatorVaultID == "" ||
-		cfg.CryptomatorCLI == "" ||
-		cfg.CryptomatorMounter == "" {
-		return Config{}, fmt.Errorf(
-			"config must define EDRIVE_CRYPTOMATOR_VAULT, EDRIVE_CRYPTOMATOR_VAULT_ID, EDRIVE_CRYPTOMATOR_CLI and EDRIVE_CRYPTOMATOR_MOUNTER",
-		)
-	}
-	if cfg.Mount == "" || cfg.RecoveryDir == "" || cfg.Recipients == "" {
-		return Config{}, fmt.Errorf("config must define EDRIVE_MOUNT, EDRIVE_RECOVERY_DIR and EDRIVE_RECIPIENTS")
+	if values["EDRIVE_DATA_ROOT"] == "" {
+		values["EDRIVE_DATA_ROOT"] = values["EDRIVE_HOME"]
 	}
 
 	if v := strings.TrimSpace(values["EDRIVE_SNAPSHOT_KEEP"]); v != "" {
@@ -139,6 +154,54 @@ func Load(path string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid EDRIVE_SNAPSHOT_KEEP=%q", v)
 		}
 		cfg.SnapshotKeep = n
+	}
+
+	if v := strings.TrimSpace(values["EDRIVE_DATA_ROOT"]); v != "" {
+		cfg.DataRoot = Expand(v)
+	}
+	if v := strings.TrimSpace(values["EDRIVE_GOOGLE_DRIVE_ROOT"]); v != "" {
+		cfg.GoogleDriveRoot = Expand(v)
+	} else {
+		cfg.GoogleDriveRoot = filepath.Join(cfg.DataRoot, "google-drive-remote")
+	}
+	if v := strings.TrimSpace(values["EDRIVE_MOUNT"]); v != "" {
+		cfg.Mount = Expand(v)
+	} else {
+		cfg.Mount = filepath.Join(cfg.DataRoot, "edrive")
+	}
+	if v := strings.TrimSpace(values["EDRIVE_RECOVERY_DIR"]); v != "" {
+		cfg.RecoveryDir = Expand(v)
+	} else {
+		cfg.RecoveryDir = filepath.Join(cfg.DataRoot, "recovery")
+	}
+	if v := strings.TrimSpace(values["EDRIVE_RECIPIENTS"]); v != "" {
+		cfg.Recipients = Expand(v)
+	}
+	if v := strings.TrimSpace(values["EDRIVE_MAC_IDENTITY"]); v != "" {
+		cfg.MacIdentity = Expand(v)
+	}
+	if v := strings.TrimSpace(values["EDRIVE_RECOVERY_IDENTITY"]); v != "" {
+		cfg.RecoveryIdentity = Expand(v)
+	}
+	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_VAULT"]); v != "" {
+		cfg.CryptomatorVault = Expand(v)
+	} else {
+		cfg.CryptomatorVault = filepath.Join(cfg.GoogleDriveRoot, "edrive")
+	}
+	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_VAULT_ID"]); v != "" {
+		cfg.CryptomatorVaultID = strings.TrimSpace(v)
+	}
+	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_CLI"]); v != "" {
+		cfg.CryptomatorCLI = Expand(v)
+	}
+	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_MOUNTER"]); v != "" {
+		cfg.CryptomatorMounter = strings.TrimSpace(v)
+	}
+	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE"]); v != "" {
+		cfg.CryptomatorKeychainService = strings.TrimSpace(v)
+	}
+	if v := strings.TrimSpace(values["EDRIVE_RUNTIME_DIR"]); v != "" {
+		cfg.RuntimeDir = Expand(v)
 	}
 
 	return cfg, nil
