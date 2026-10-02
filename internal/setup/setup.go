@@ -126,6 +126,8 @@ func ensureVault(rc *rclone.Client) error {
 	if err != nil {
 		return err
 	}
+	fmt.Println("Vault remoteHasVault:", remoteHasVault)
+	fmt.Println("Vault remoteHasOther:", remoteHasOther)
 	if remoteHasOther && !remoteHasVault {
 		return fmt.Errorf("remote path %s already contains files but is not a Cryptomator vault", rc.Remote())
 	}
@@ -153,6 +155,7 @@ func ensureVault(rc *rclone.Client) error {
 			return err
 		}
 	case !state.Exists || state.Empty:
+		fmt.Println("No local or remote edrive vault exists. Creating a new vault...", config.LocalVaultPath())
 		if err := createNewVault(config.LocalVaultPath()); err != nil {
 			return err
 		}
@@ -187,7 +190,7 @@ func createNewVault(vaultPath string) error {
 	fmt.Println()
 	fmt.Println("One Cryptomator GUI step is required to create the vault.")
 	fmt.Println("Create a new vault with:")
-	fmt.Println("  Vault name: edrive")
+	fmt.Println("  Vault name: vault")
 	fmt.Println("  Storage location:", parent)
 	fmt.Println()
 	fmt.Println("Keep 'Remember password' enabled for this vault.")
@@ -274,7 +277,11 @@ func ensureDefaultDevice(ageKeygen string) error {
 			return fmt.Errorf("edrive needs access to its existing mac-1 device identity")
 		}
 		_, err = device.Import("mac-1", identity, ageKeygen)
-		return err
+
+		if err != nil {
+			return fmt.Errorf("failed to import existing mac-1 identity: %w\n\nIf the Keychain identity is corrupted, you can remove it by running:\n  security delete-generic-password -s edrive -a identity:mac-1\n\nThen run setup again.", err)
+		}
+		return nil
 	}
 	_, err = device.AddGenerated("mac-1", ageKeygen)
 	return err
