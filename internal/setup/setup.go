@@ -291,7 +291,7 @@ func ensureDefaultDevice(ageKeygen string) error {
 		return err
 	}
 
-	_, err := device.AddGenerated("mac-1", ageKeygen)
+	_, err = device.AddGenerated("mac-1", ageKeygen)
 	return err
 }
 
