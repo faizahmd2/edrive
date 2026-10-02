@@ -6,17 +6,47 @@ import (
 	"strings"
 )
 
-const (
-	Service          = "edrive"
-	DeviceIdentity   = "device-identity"
-	RecoveryIdentity = "recovery-identity"
-)
+const Service = "edrive"
 
-func Get(account string) (string, error) {
-	if !validAccount(account) {
-		return "", fmt.Errorf("invalid edrive Keychain account")
-	}
+const recoveryAccount = "recovery"
 
+func IdentityAccount(label string) string {
+	return "identity:" + label
+}
+
+func GetIdentity(label string) (string, error) {
+	return get(IdentityAccount(label))
+}
+
+func SetIdentity(label, secret string) error {
+	return set(IdentityAccount(label), secret)
+}
+
+func IdentityExists(label string) bool {
+	return exists(IdentityAccount(label))
+}
+
+func DeleteIdentity(label string) error {
+	return remove(IdentityAccount(label))
+}
+
+func GetRecovery() (string, error) {
+	return get(recoveryAccount)
+}
+
+func SetRecovery(secret string) error {
+	return set(recoveryAccount, secret)
+}
+
+func RecoveryExists() bool {
+	return exists(recoveryAccount)
+}
+
+func DeleteRecovery() error {
+	return remove(recoveryAccount)
+}
+
+func get(account string) (string, error) {
 	out, err := exec.Command(
 		"/usr/bin/security",
 		"find-generic-password",
@@ -25,42 +55,34 @@ func Get(account string) (string, error) {
 		"-w",
 	).Output()
 	if err != nil {
-		return "", fmt.Errorf("read %s from macOS Keychain: %w", account, err)
+		return "", fmt.Errorf("read edrive Keychain item %q: %w", account, err)
 	}
-
 	secret := strings.TrimSpace(string(out))
 	if secret == "" {
-		return "", fmt.Errorf("empty %s in macOS Keychain", account)
+		return "", fmt.Errorf("edrive Keychain item %q is empty", account)
 	}
 	return secret, nil
 }
 
-func Set(account, secret string) error {
-	if !validAccount(account) {
-		return fmt.Errorf("invalid edrive Keychain account")
+func set(account, secret string) error {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return fmt.Errorf("cannot store empty edrive Keychain item %q", account)
 	}
-	if strings.TrimSpace(secret) == "" {
-		return fmt.Errorf("cannot store empty %s", account)
-	}
-
-	cmd := exec.Command(
+	if err := exec.Command(
 		"/usr/bin/security",
 		"add-generic-password",
 		"-U",
 		"-s", Service,
 		"-a", account,
 		"-w", secret,
-	)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("store %s in macOS Keychain: %w", account, err)
+	).Run(); err != nil {
+		return fmt.Errorf("store edrive Keychain item %q: %w", account, err)
 	}
 	return nil
 }
 
-func Exists(account string) bool {
-	if !validAccount(account) {
-		return false
-	}
+func exists(account string) bool {
 	return exec.Command(
 		"/usr/bin/security",
 		"find-generic-password",
@@ -69,11 +91,8 @@ func Exists(account string) bool {
 	).Run() == nil
 }
 
-func Delete(account string) error {
-	if !validAccount(account) {
-		return fmt.Errorf("invalid edrive Keychain account")
-	}
-	if !Exists(account) {
+func remove(account string) error {
+	if !exists(account) {
 		return nil
 	}
 	if err := exec.Command(
@@ -82,11 +101,7 @@ func Delete(account string) error {
 		"-s", Service,
 		"-a", account,
 	).Run(); err != nil {
-		return fmt.Errorf("delete %s from macOS Keychain: %w", account, err)
+		return fmt.Errorf("delete edrive Keychain item %q: %w", account, err)
 	}
 	return nil
-}
-
-func validAccount(account string) bool {
-	return account == DeviceIdentity || account == RecoveryIdentity
 }
