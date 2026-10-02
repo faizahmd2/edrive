@@ -166,6 +166,24 @@ func (c *Client) Lock() error {
 	return fmt.Errorf("timed out waiting for Cryptomator to close")
 }
 
+func cryptomatorCredential(vaultID string) (string, error) {
+	out, err := exec.Command(
+		"/usr/bin/security",
+		"find-generic-password",
+		"-s", KeychainService,
+		"-a", vaultID,
+		"-w",
+	).Output()
+	if err != nil {
+		return "", fmt.Errorf("Cryptomator's password is not available from macOS Keychain for this vault; unlock it once in Cryptomator so its password is stored, then retry")
+	}
+	credential := strings.TrimSpace(string(out))
+	if credential == "" {
+		return "", fmt.Errorf("Cryptomator's Keychain password for this vault is empty; open Cryptomator and set the vault password again")
+	}
+	return credential, nil
+}
+
 func DiscoverVaultID(vaultPath string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
