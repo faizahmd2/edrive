@@ -88,12 +88,14 @@ func Load(path string) (Config, error) {
 		if os.IsNotExist(err) {
 			return cfg, nil
 		}
-		return Config{}, fmt.Errorf("open config: %w", err)
+		cfg.ConfigFound = true
+		return cfg, fmt.Errorf("open config: %w", err)
 	}
 	defer f.Close()
+	cfg.ConfigFound = true
 
 	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("decode config: %w", err)
+		return cfg, fmt.Errorf("decode config: %w", err)
 	}
 	cfg.ConfigPath = Defaults(cfg.ConfigPath).ConfigPath
 	cfg.ConfigFound = true
