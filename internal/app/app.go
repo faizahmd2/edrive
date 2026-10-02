@@ -374,12 +374,6 @@ func (a App) Lock() error {
 	return nil
 }
 
-func wipeBytes(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
-}
-
 func GenerateIdentity(path string) error {
 	if path == "" {
 		return fmt.Errorf("output path required")
