@@ -19,6 +19,8 @@ type Config struct {
 	StorageName     string `json:"storage_name"`
 	LastBackupDir   string `json:"last_backup_dir,omitempty"`
 	Recipients      string `json:"recipients"`
+	AgePath         string `json:"age_path,omitempty"`
+	ZstdPath        string `json:"zstd_path,omitempty"`
 	CryptomatorCLI  string `json:"cryptomator_cli,omitempty"`
 }
 
@@ -123,6 +125,12 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.LastBackupDir != "" {
 		cfg.LastBackupDir = Expand(cfg.LastBackupDir)
+	}
+	if cfg.AgePath != "" {
+		cfg.AgePath = Expand(cfg.AgePath)
+	}
+	if cfg.ZstdPath != "" {
+		cfg.ZstdPath = Expand(cfg.ZstdPath)
 	}
 	if cfg.CryptomatorCLI != "" {
 		cfg.CryptomatorCLI = Expand(cfg.CryptomatorCLI)
