@@ -1,103 +1,176 @@
 # edrive
 
-`edrive` is a local-first developer identity toolkit. The live data store is a
-Cryptomator vault backed by a local Google Drive filesystem, while recovery is
-kept independent through portable `age`-encrypted snapshots.
+edrive is a local-first CLI orchestrator for a personal encrypted developer data
+environment.
+
+It does not run a remote edrive service, proxy user data, manage a Google
+account, or implement custom cryptography.
 
 ## Architecture
 
-```text
-Daily use:
+Daily data flow:
 
-Finder
-  -> Cryptomator / FUSE-T
-  -> mounted vault
-  -> Google Drive sync
+    Finder
+      -> Cryptomator / FUSE-T
+      -> mounted plaintext view
+      -> local encrypted vault
+      -> Google Drive sync
 
-Recovery:
+Recovery flow:
 
-mounted vault
-  -> tar
-  -> zstd
-  -> age
-  -> independent recovery snapshot
-```
+    mounted vault
+      -> tar
+      -> zstd
+      -> age
+      -> .tar.zst.age
 
-Cryptomator protects the live vault. Google Drive is only the storage/sync
-layer. `age` is a separate recovery path. `edrive` orchestrates these pieces.
+Cryptomator protects the live vault. Google Drive provides storage/synchronization.
+age provides an independent recovery format. edrive orchestrates the local
+workflow.
 
-Recovery does not require Cryptomator or `edrive` to decrypt the archive.
+Recovery does not require the edrive binary or Cryptomator to decrypt an
+archive.
 
-## Commands
+## Local layout
 
-```sh
-edrive setup
-edrive doctor
-edrive status
-edrive unlock
-edrive lock
+By default edrive keeps one data root under the user's home directory:
 
-edrive backup
-edrive backups
-edrive verify [snapshot] --identity PATH
-edrive restore [snapshot] --identity PATH --output DIR
+    ~/edrive/
+    ├── google-drive-remote/
+    │   └── edrive/       # Cryptomator encrypted vault
+    ├── edrive/           # live mounted plaintext view
+    └── recovery/         # local recovery snapshots
 
-edrive identity generate --output PATH
-edrive identity recipient PATH
-edrive identity add PATH --to RECIPIENTS_FILE
-```
+Machine configuration, runtime state, recipients, and the Mac identity live
+under:
+
+    ~/Library/Application Support/edrive/
+    ├── config.sh
+    ├── recipients.txt
+    ├── identities/
+    └── runtime/
+
+The recovery identity is intentionally kept outside both locations.
 
 ## Setup
 
-The normal installation flow is:
+The intended flow on a new Mac is:
 
-```sh
-./bootstrap.sh
-edrive setup
-```
+    ./bootstrap.sh
+    edrive setup
 
-`edrive setup` is macOS-aware and prepares the local environment. It can install
-the required Homebrew packages/casks, detect the local Google Drive location,
-locate the official Cryptomator CLI, create the local edrive
-directories, reuse/validate the Mac age identity, register known public
-recipients, and write the machine-specific config.
+The default data root is:
 
-Cryptomator vault creation remains a Cryptomator operation. On a fresh machine,
-setup will open Cryptomator and tell you the exact vault path to create or add.
-After that, run `edrive setup` again and it will discover the vault ID from
-Cryptomator's local settings.
+    ~/edrive
 
-The generated config contains absolute machine-specific paths and is ignored by
-Git. The real recipients file is also local-only.
+Setup asks for a different root only on the first run. Later runs reuse the
+recorded root and continue from the current state.
+
+Setup is state-aware. It writes the local configuration as progress is made, so
+a failure halfway through does not require starting over.
+
+### What setup does
+
+1. Checks for required local dependencies.
+2. If a dependency is missing, asks before installing it.
+3. Creates only the local edrive directories it owns.
+4. Opens Google Drive for desktop and Google Drive in the browser for the user
+   to authenticate and configure.
+5. Uses a dedicated local My Drive mirror directory under the edrive data root.
+6. Finds or downloads the Cryptomator CLI.
+7. Reuses or creates the Mac age identity.
+8. Uses the existing offline recovery identity.
+9. Maintains the local public recipient list.
+10. Finds the Cryptomator vault and discovers its vault ID.
+11. Writes the final machine-specific config.
+12. Leaves the user at edrive doctor for final diagnostics.
+
+edrive never receives the Google password or OAuth credentials.
+
+For Google Drive, the user must configure My Drive mirroring themselves. The
+expected local path is:
+
+    <EDRIVE_DATA_ROOT>/google-drive-remote
+
+edrive does not scan arbitrary Google Drive locations and does not change
+Google Drive settings automatically.
+
+For Cryptomator, the CLI is enough for normal edrive operation. The desktop
+Cryptomator application is only needed for one-time creation or registration
+of a new vault. Setup will tell the user the exact path and can open Cryptomator
+when it is required.
+
+## Commands
+
+    edrive setup
+    edrive doctor
+    edrive status
+
+    edrive unlock
+    edrive lock
+
+    edrive backup
+    edrive backups
+    edrive verify [snapshot] --identity PATH
+    edrive restore [snapshot] --identity PATH --output DIR
+
+    edrive identity generate --output PATH
+    edrive identity recipient PATH
+    edrive identity add PATH --to RECIPIENTS_FILE
+
+    edrive remove
+    edrive purge
+
+Operational command errors are intentionally concise and point to:
+
+    edrive doctor
+
+The doctor command is the place to inspect dependencies, paths, identities,
+vault registration, Keychain state, and Google Drive availability.
 
 ## Identity model
 
-For now the identity set is deliberately small:
+The identity set is deliberately small:
 
 - Mac identity
 - offline recovery identity
 - iPhone identity later
 
-Private age identities stay on their respective devices. Only public recipients
-are used by `edrive` to encrypt recovery snapshots.
+A private age identity stays on its device. Recovery snapshots are encrypted to
+the configured public recipients.
 
 ## Recovery
 
-Backups are streamed without creating a plaintext intermediate archive:
+Snapshots are streamed without creating a plaintext archive on disk:
 
-```text
-files -> tar -> zstd -> age -> .tar.zst.age
-```
+    files
+      -> tar
+      -> zstd
+      -> age
+      -> recovery snapshot
 
-A recovery snapshot can therefore be decrypted with standard age tooling without
-depending on the `edrive` binary.
+The resulting .tar.zst.age file can be recovered with standard age, zstd, and
+tar tooling.
+
+## Cleanup
+
+edrive remove removes edrive's local configuration and runtime state while
+preserving the data root, Google Drive mirror, recovery snapshots, and
+identities.
+
+edrive purge is destructive for edrive-owned local state. It requires an
+explicit PURGE confirmation, refuses to run while the vault is mounted, and
+does not delete the Google Drive mirror or the external recovery identity.
+
+System applications and the Google account are intentionally outside these
+commands.
 
 ## Deliberate constraints
 
 - No custom cryptography.
 - No remote edrive server.
+- No Google OAuth credentials handled by edrive.
 - No plaintext secrets in the Git repository.
 - No encrypted vault data in Git.
-- Recovery identity remains outside the normal working tree.
-- The first recovery implementation uses the standard `age` and `zstd`
-  executables rather than reimplementing their formats.
+- Public recipients are machine-specific configuration, not project source.
+- Recovery remains independent of the edrive binary.
