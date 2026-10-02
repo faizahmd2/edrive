@@ -46,37 +46,70 @@ func (a App) Doctor() error {
 	} else if !fileMode0600(a.Config.ConfigPath) {
 		configDetail = "permissions should be 0600"
 	}
-	checks = append(checks, check{"Config", configOK, configDetail})
+	checks = append(checks, check{name: "Config", ok: configOK, detail: configDetail})
 
-	dataOK := isDir(a.Config.DataRoot)
-	checks = append(checks, check{"Workspace", dataOK, a.Config.DataRoot})
+	workspaceOK := isDir(a.Config.DataRoot)
+	checks = append(checks, check{name: "Workspace", ok: workspaceOK, detail: a.Config.DataRoot})
 
 	if runtime.GOOS == "darwin" {
 		driveRoot, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
 		if err != nil {
-			checks = append(checks, check{"Google Drive", false, "local storage unavailable"})
+			checks = append(checks, check{name: "Google Drive", ok: false, detail: "local storage unavailable"})
 		} else {
-			checks = append(checks, check{"Google Drive", true, driveRoot})
+			checks = append(checks, check{name: "Google Drive", ok: true, detail: driveRoot})
 			vault := filepath.Join(driveRoot, a.Config.StorageName)
-			checks = append(checks, check{"Encrypted vault", isFile(filepath.Join(vault, "vault.cryptomator")), vault})
-			if _, err := cryptomator.DiscoverVaultID(vault); err != nil {
-				checks = append(checks, check{"Cryptomator registration", false, "vault is not registered"})
-			} else {
-				checks = append(checks, check{"Cryptomator registration", true, "ready"})
+			checks = append(checks, check{
+				name:   "Encrypted vault",
+				ok:     isFile(filepath.Join(vault, "vault.cryptomator")),
+				detail: vault,
+			})
+			_, regErr := cryptomator.DiscoverVaultID(vault)
+			checks = append(checks, check{
+				name:   "Cryptomator registration",
+				ok:     regErr == nil,
+				detail: "ready",
+			})
+			if regErr != nil {
+				checks[len(checks)-1].detail = "not registered"
 			}
 		}
-		checks = append(checks, check{"Google Drive app", isDir("/Applications/Google Drive.app"), "/Applications/Google Drive.app"})
-		checks = append(checks, check{"FUSE-T", brewCaskInstalled("fuse-t"), "installed"})
+
+		checks = append(checks, check{
+			name:   "Google Drive app",
+			ok:     isDir("/Applications/Google Drive.app"),
+			detail: "/Applications/Google Drive.app",
+		})
+		checks = append(checks, check{
+			name:   "FUSE-T",
+			ok:     brewCaskInstalled("fuse-t"),
+			detail: "installed",
+		})
 	}
 
 	checks = append(checks, toolCheck("age", a.Config.AgePath, ageVersion))
 	checks = append(checks, toolCheck("zstd", a.Config.ZstdPath, zstdVersion))
-	checks = append(checks, check{"Cryptomator CLI", isExecutableFile(a.Config.CryptomatorCLI), a.Config.CryptomatorCLI})
+	checks = append(checks, check{
+		name:   "Cryptomator CLI",
+		ok:     isExecutableFile(a.Config.CryptomatorCLI),
+		detail: a.Config.CryptomatorCLI,
+	})
 
-	recipientCount, recErr := loadRecipients(a.Config.Recipients)
-	checks = append(checks, check{"Recipients", recErr == nil, fmt.Sprintf("%d recipient(s)", recipientCount)})
-	checks = append(checks, check{"Device identity", keychain.Exists(keychain.DeviceIdentity), "macOS Keychain"})
-	checks = append(checks, check{"Recovery identity", keychain.Exists(keychain.RecoveryIdentity), "macOS Keychain"})
+	recipients, recErr := loadRecipients(a.Config.Recipients)
+	recDetail := fmt.Sprintf("%d recipient(s)", recipients)
+	if recErr != nil {
+		recDetail = recErr.Error()
+	}
+	checks = append(checks, check{name: "Recipients", ok: recErr == nil, detail: recDetail})
+	checks = append(checks, check{
+		name:   "Device identity",
+		ok:     keychain.Exists(keychain.DeviceIdentity),
+		detail: "macOS Keychain",
+	})
+	checks = append(checks, check{
+		name:   "Recovery identity",
+		ok:     keychain.Exists(keychain.RecoveryIdentity),
+		detail: "macOS Keychain",
+	})
 
 	all := true
 	for _, c := range checks {
@@ -85,8 +118,7 @@ func (a App) Doctor() error {
 			mark = "✗"
 			all = false
 		}
-		fmt.Printf("%-23s %s  %s
-", c.name, mark, c.detail)
+		fmt.Printf("%-23s %s  %s\n", c.name, mark, c.detail)
 	}
 
 	fmt.Println()
@@ -100,28 +132,21 @@ func (a App) Doctor() error {
 func (a App) Status() error {
 	fmt.Println("EDRIVE STATUS")
 	fmt.Println()
-	fmt.Printf("Workspace: %s
-", a.Config.DataRoot)
-	fmt.Printf("State:     %s
-", workspaceState(a.Config.DataRoot))
+	fmt.Printf("Workspace: %s\n", a.Config.DataRoot)
+	fmt.Printf("State:     %s\n", workspaceState(a.Config.DataRoot))
 
-	storageRoot, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
-	if err != nil {
-		fmt.Println("Storage:   unavailable")
-	} else {
+	if root, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root(); err == nil {
 		fmt.Println("Storage:   Google Drive")
-		fmt.Printf("Vault:     %s
-", filepath.Join(storageRoot, a.Config.StorageName))
+		fmt.Printf("Vault:     %s\n", filepath.Join(root, a.Config.StorageName))
+	} else {
+		fmt.Println("Storage:   unavailable")
 	}
 
 	if a.Config.LastBackupDir == "" {
 		fmt.Println("Backups:   no previous destination")
 	} else {
-		fmt.Printf("Backups:   %s
-", a.Config.LastBackupDir)
+		fmt.Printf("Backups:   %s\n", a.Config.LastBackupDir)
 	}
-
-	fmt.Println()
 	return nil
 }
 
@@ -129,10 +154,7 @@ func (a App) Open() error {
 	if err := a.ensureUnlocked(); err != nil {
 		return err
 	}
-	if err := ui.Open(a.Config.DataRoot); err != nil {
-		return err
-	}
-	return nil
+	return ui.Open(a.Config.DataRoot)
 }
 
 func (a App) CD() error {
@@ -147,8 +169,7 @@ func (a App) Unlock() error {
 	if err := a.ensureUnlocked(); err != nil {
 		return err
 	}
-	fmt.Printf("Workspace opened: %s
-", a.Config.DataRoot)
+	fmt.Printf("Workspace opened: %s\n", a.Config.DataRoot)
 	return nil
 }
 
@@ -161,8 +182,9 @@ func (a App) ensureUnlocked() error {
 	if err != nil {
 		return fmt.Errorf("Google Drive storage is unavailable")
 	}
+
 	vaultPath := filepath.Join(storageRoot, a.Config.StorageName)
-	if _, err := os.Stat(filepath.Join(vaultPath, "vault.cryptomator")); err != nil {
+	if !isFile(filepath.Join(vaultPath, "vault.cryptomator")) {
 		return fmt.Errorf("encrypted workspace is unavailable")
 	}
 	if !isExecutableFile(a.Config.CryptomatorCLI) {
@@ -191,8 +213,8 @@ func (a App) Close() error {
 	if err != nil {
 		return err
 	}
-	vaultPath := filepath.Join(storageRoot, a.Config.StorageName)
 
+	vaultPath := filepath.Join(storageRoot, a.Config.StorageName)
 	client := cryptomator.New(cryptomator.Config{
 		VaultPath:  vaultPath,
 		MountPoint: a.Config.DataRoot,
@@ -211,10 +233,11 @@ func (a App) Backup() error {
 		return err
 	}
 
-	fmt.Println("Requesting secure recovery access...")
+	// Accessing the recovery identity is intentionally the first sensitive
+	// operation. macOS may ask for Keychain permission here.
 	recoveryIdentity, err := keychain.Get(keychain.RecoveryIdentity)
 	if err != nil {
-		return err
+		return fmt.Errorf("recovery access was not granted")
 	}
 
 	if err := a.ensureUnlocked(); err != nil {
@@ -223,15 +246,31 @@ func (a App) Backup() error {
 
 	defaultDir := a.Config.LastBackupDir
 	if !isDir(defaultDir) {
-		defaultDir = a.Config.DataRoot
+		defaultDir, err = os.UserHomeDir()
+		if err != nil {
+			return err
+		}
 	}
-	destination, selected, err := ui.ChooseFolder("Choose where to save this edrive backup", defaultDir)
+	if pathInside(a.Config.DataRoot, defaultDir) {
+		defaultDir, err = os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+	}
+
+	destination, selected, err := ui.ChooseFolder(
+		"Choose where to save this edrive backup",
+		defaultDir,
+	)
 	if err != nil {
 		return err
 	}
 	if !selected {
 		fmt.Println("Backup cancelled.")
 		return nil
+	}
+	if pathInside(a.Config.DataRoot, destination) {
+		return fmt.Errorf("backup destination cannot be inside the edrive workspace")
 	}
 
 	if err := os.MkdirAll(config.DefaultTempDir(), 0700); err != nil {
@@ -253,6 +292,7 @@ func (a App) Backup() error {
 	if err != nil {
 		return err
 	}
+
 	createErr := snapshot.CreateEncryptedSnapshot(
 		a.Config.DataRoot,
 		a.Config.Recipients,
@@ -261,19 +301,21 @@ func (a App) Backup() error {
 		manifest,
 		archive,
 	)
-	syncErr := error(nil)
-	closeErr := archive.Close()
+
+	var closeErr error
 	if createErr == nil {
-		syncErr = syncFile(archivePath)
+		closeErr = archive.Close()
+	} else {
+		_ = archive.Close()
 	}
 	if createErr != nil {
 		return createErr
 	}
-	if syncErr != nil {
-		return syncErr
-	}
 	if closeErr != nil {
 		return closeErr
+	}
+	if err := syncFile(archivePath); err != nil {
+		return err
 	}
 
 	if err := withIdentityFile(recoveryIdentity, func(identityPath string) error {
@@ -282,6 +324,7 @@ func (a App) Backup() error {
 			return err
 		}
 		defer f.Close()
+
 		_, err = snapshot.ReadAndVerifyArchive(
 			f,
 			identityPath,
@@ -299,6 +342,7 @@ func (a App) Backup() error {
 	if err != nil {
 		return err
 	}
+
 	committed := false
 	defer func() {
 		if !committed {
@@ -307,40 +351,37 @@ func (a App) Backup() error {
 	}()
 
 	finalArchive := filepath.Join(packageDir, "backup.tar.zst.age")
-	if err := copyFile(archivePath, finalArchive, 0600); err != nil {
+	if err := copyFileAtomic(archivePath, finalArchive, 0600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(packageDir, "recovery-key.txt"), []byte(recoveryIdentity+"
-"), 0600); err != nil {
+	if err := writePrivateFile(filepath.Join(packageDir, "recovery-key.txt"), recoveryIdentity+"\n"); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(packageDir, "README.txt"), []byte(backupReadme), 0600); err != nil {
-		return err
-	}
-	if err := syncDir(packageDir); err != nil {
+	if err := writePrivateFile(filepath.Join(packageDir, "README.txt"), backupReadme); err != nil {
 		return err
 	}
 
-	a.Config.LastBackupDir = destination
-	if err := a.Config.Save(); err != nil {
+	if err := fsyncDir(packageDir); err != nil {
 		return err
 	}
 
 	committed = true
+	a.Config.LastBackupDir = destination
+	configErr := a.Config.Save()
+
 	_ = ui.Open(packageDir)
 
-	info, err := os.Stat(finalArchive)
-	if err != nil {
-		return err
+	info, statErr := os.Stat(finalArchive)
+	if statErr != nil {
+		return statErr
 	}
+
 	fmt.Println()
-	fmt.Printf("Backup saved: %s
-", packageDir)
-	fmt.Printf("Files:        %d
-", len(manifest.Files))
-	fmt.Printf("Encrypted:    %s
-", formatBytes(info.Size()))
-	return nil
+	fmt.Printf("Backup saved: %s\n", packageDir)
+	fmt.Printf("Files:        %d\n", len(manifest.Files))
+	fmt.Printf("Encrypted:    %s\n", formatBytes(info.Size()))
+
+	return configErr
 }
 
 func (a App) Restore() error {
@@ -350,8 +391,9 @@ func (a App) Restore() error {
 
 	defaultDir := a.Config.LastBackupDir
 	if !isDir(defaultDir) {
-		defaultDir = config.DefaultDataRoot()
+		defaultDir, _ = os.UserHomeDir()
 	}
+
 	backupDir, selected, err := ui.ChooseFolder("Choose an edrive backup folder", defaultDir)
 	if err != nil {
 		return err
@@ -362,33 +404,33 @@ func (a App) Restore() error {
 	}
 
 	archivePath := filepath.Join(backupDir, "backup.tar.zst.age")
-	recoveryKeyPath := filepath.Join(backupDir, "recovery-key.txt")
+	keyPath := filepath.Join(backupDir, "recovery-key.txt")
 	if !isFile(archivePath) {
 		return fmt.Errorf("selected folder does not contain an edrive backup")
 	}
 
-	recoveryIdentity, err := keychain.Get(keychain.RecoveryIdentity)
-	if err != nil {
-		if !isFile(recoveryKeyPath) {
-			return err
+	recoveryIdentity, keyErr := keychain.Get(keychain.RecoveryIdentity)
+	if keyErr != nil {
+		if !isFile(keyPath) {
+			return fmt.Errorf("recovery identity is unavailable")
 		}
-		b, readErr := os.ReadFile(recoveryKeyPath)
-		if readErr != nil {
-			return readErr
+		b, err := os.ReadFile(keyPath)
+		if err != nil {
+			return err
 		}
 		recoveryIdentity = strings.TrimSpace(string(b))
 		if recoveryIdentity == "" {
 			return fmt.Errorf("backup recovery key is empty")
 		}
-		if setErr := keychain.Set(keychain.RecoveryIdentity, recoveryIdentity); setErr != nil {
-			return setErr
+		if err := keychain.Set(keychain.RecoveryIdentity, recoveryIdentity); err != nil {
+			return err
 		}
 	}
 
-	restoreRoot, selected, err := ui.ChooseFolder(
-		"Choose an empty folder to restore the backup into",
-		filepath.Join(config.DefaultDataRoot(), "restore"),
-	)
+	restoreDir, selected, err := ui.ChooseFolder("Choose an empty folder for the restored workspace", func() string {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "edrive-restore")
+	}())
 	if err != nil {
 		return err
 	}
@@ -409,16 +451,14 @@ func (a App) Restore() error {
 			identityPath,
 			a.Config.AgePath,
 			a.Config.ZstdPath,
-			restoreRoot,
+			restoreDir,
 			true,
 		)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Restored: %s
-", restoreRoot)
-		fmt.Printf("Files:    %d
-", len(manifest.Files))
+		fmt.Printf("Restored: %s\n", restoreDir)
+		fmt.Printf("Files:    %d\n", len(manifest.Files))
 		fmt.Println("Integrity: OK")
 		return nil
 	})
@@ -434,10 +474,8 @@ func (a App) requireTools() error {
 	if !isExecutableFile(a.Config.CryptomatorCLI) {
 		return fmt.Errorf("Cryptomator CLI is unavailable")
 	}
-	if _, err := loadRecipients(a.Config.Recipients); err != nil {
-		return err
-	}
-	return nil
+	_, err := loadRecipients(a.Config.Recipients)
+	return err
 }
 
 func workspaceState(path string) string {
@@ -455,8 +493,7 @@ func mounted(path string) bool {
 	if err != nil {
 		return false
 	}
-	marker := " on " + filepath.Clean(path) + " ("
-	return strings.Contains(string(out), marker)
+	return strings.Contains(string(out), " on "+filepath.Clean(path)+" (")
 }
 
 func loadRecipients(path string) (int, error) {
@@ -465,8 +502,7 @@ func loadRecipients(path string) (int, error) {
 		return 0, err
 	}
 	count := 0
-	for _, line := range strings.Split(string(b), "
-") {
+	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -483,7 +519,11 @@ func loadRecipients(path string) (int, error) {
 }
 
 func toolCheck(name, path, version string) check {
-	return check{name: name, ok: toolVersionMatches(path, version), detail: path}
+	detail := path
+	if detail == "" {
+		detail = "not configured"
+	}
+	return check{name: name, ok: toolVersionMatches(path, version), detail: detail}
 }
 
 func toolVersionMatches(path, version string) bool {
@@ -518,6 +558,16 @@ func brewCaskInstalled(name string) bool {
 	return exec.Command("brew", "list", "--cask", name).Run() == nil
 }
 
+func pathInside(root, path string) bool {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}
+
 func createBackupPackage(parent string) (string, error) {
 	base := time.Now().UTC().Format("20060102-150405")
 	for i := 0; i < 100; i++ {
@@ -528,7 +578,8 @@ func createBackupPackage(parent string) (string, error) {
 		path := filepath.Join(parent, name)
 		if err := os.Mkdir(path, 0700); err == nil {
 			return path, nil
-		} else if !os.IsExist(err) {
+		}
+		if !os.IsExist(err) {
 			return "", err
 		}
 	}
@@ -543,32 +594,28 @@ func withIdentityFile(identity, fn func(string) error) error {
 	defer os.RemoveAll(tmpDir)
 
 	path := filepath.Join(tmpDir, "identity")
-	if err := os.WriteFile(path, []byte(identity+"
-"), 0600); err != nil {
+	if err := writePrivateFile(path, identity+"\n"); err != nil {
 		return err
 	}
 	return fn(path)
 }
 
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
+func writePrivateFile(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(out, in)
+	_, writeErr := io.WriteString(f, content)
 	syncErr := error(nil)
-	if copyErr == nil {
-		syncErr = out.Sync()
+	if writeErr == nil {
+		syncErr = f.Sync()
 	}
-	closeErr := out.Close()
-	if copyErr != nil {
-		return copyErr
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
 	}
 	if syncErr != nil {
 		return syncErr
@@ -576,8 +623,48 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	return closeErr
 }
 
+func copyFileAtomic(src, dst string, mode os.FileMode) error {
+	tempDir := filepath.Dir(dst)
+	temp, err := os.CreateTemp(tempDir, ".copy-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+
+	if err := temp.Chmod(mode); err != nil {
+		_ = temp.Close()
+		return err
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		_ = temp.Close()
+		return err
+	}
+	_, copyErr := io.Copy(temp, in)
+	inCloseErr := in.Close()
+	if copyErr != nil {
+		_ = temp.Close()
+		return copyErr
+	}
+	if inCloseErr != nil {
+		_ = temp.Close()
+		return inCloseErr
+	}
+
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, dst)
+}
+
 func syncFile(path string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_RDONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -589,7 +676,7 @@ func syncFile(path string) error {
 	return closeErr
 }
 
-func syncDir(path string) error {
+func fsyncDir(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -602,13 +689,4 @@ func syncDir(path string) error {
 	return closeErr
 }
 
-const backupReadme = "edrive backup set
-
-This folder contains:
-- backup.tar.zst.age: the encrypted backup
-- recovery-key.txt: the private recovery identity required to decrypt it
-
-Keep both files together and protect this folder like a private secret.
-
-The recovery key is never printed by edrive during normal operation.
-"
+const backupReadme = "edrive backup set\n\nThis folder contains:\n- backup.tar.zst.age: the encrypted workspace backup\n- recovery-key.txt: the private recovery identity needed to decrypt it\n\nKeep this folder private. The recovery key is never displayed by edrive during normal operation.\n"
