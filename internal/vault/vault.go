@@ -12,8 +12,8 @@ import (
 const bindingVersion = 1
 
 type Binding struct {
-	Version int
-	Path string
+	Version   int
+	Path      string
 	CreatedAt time.Time
 }
 
