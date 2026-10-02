@@ -15,12 +15,8 @@ import (
 	"github.com/faiz/edrive/internal/keychain"
 	"github.com/faiz/edrive/internal/provider"
 	"github.com/faiz/edrive/internal/snapshot"
+	"github.com/faiz/edrive/internal/toolchain"
 	"github.com/faiz/edrive/internal/ui"
-)
-
-const (
-	ageVersion  = "1.3.2"
-	zstdVersion = "1.5.7"
 )
 
 type App struct {
@@ -86,8 +82,8 @@ func (a App) Doctor() error {
 		})
 	}
 
-	checks = append(checks, toolCheck("age", a.Config.AgePath, ageVersion))
-	checks = append(checks, toolCheck("zstd", a.Config.ZstdPath, zstdVersion))
+	checks = append(checks, toolCheck("age", a.Config.AgePath, toolchain.AgeVersion))
+	checks = append(checks, toolCheck("zstd", a.Config.ZstdPath, toolchain.ZstdVersion))
 	checks = append(checks, check{
 		name:   "Cryptomator CLI",
 		ok:     isExecutableFile(a.Config.CryptomatorCLI),
@@ -470,11 +466,11 @@ func (a App) Restore() error {
 }
 
 func (a App) requireTools() error {
-	if !toolVersionMatches(a.Config.AgePath, ageVersion) {
-		return fmt.Errorf("edrive requires age %s", ageVersion)
+	if !toolVersionMatches(a.Config.AgePath, toolchain.AgeVersion) {
+		return fmt.Errorf("edrive requires age %s", toolchain.AgeVersion)
 	}
-	if !toolVersionMatches(a.Config.ZstdPath, zstdVersion) {
-		return fmt.Errorf("edrive requires zstd %s", zstdVersion)
+	if !toolVersionMatches(a.Config.ZstdPath, toolchain.ZstdVersion) {
+		return fmt.Errorf("edrive requires zstd %s", toolchain.ZstdVersion)
 	}
 	if !isExecutableFile(a.Config.CryptomatorCLI) {
 		return fmt.Errorf("Cryptomator CLI is unavailable")
