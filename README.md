@@ -2,8 +2,7 @@
 
 edrive is a local-first encrypted workspace for one person.
 
-The user chooses the working folder once. edrive keeps its control state in
-`~/.edrive`, while Google Drive and Cryptomator remain external applications.
+edrive is the control/orchestration layer. Google Drive stores and syncs the encrypted vault. Cryptomator owns the live encryption and password. FUSE-T provides the mounted filesystem. edrive does not replace any of those tools.
 
 ## Commands
 
@@ -27,18 +26,127 @@ edrive help
 edrive version
 ```
 
-There is no `status`, `verify`, `backups`, `restore`, or separate
-snapshot command.
+There is no separate status, verify, backups, restore, or snapshot workflow.
 
-## Layout
+## Setup
 
-The user's workspace is the mounted plaintext view:
+Every `edrive setup` is a fresh setup.
+
+If configuration already exists, edrive first asks whether to rebuild it. The prompt tells the user to run `edrive doctor` first when they want to inspect the existing installation.
+
+Fresh setup does not delete Google Drive data, Cryptomator vaults, or Keychain identities. It rebuilds edrive's local configuration and device registry.
+
+The setup flow is:
+
+1. Check all required local applications and pinned tools together. Missing pieces are listed together with the next action.
+2. Choose the folder where the decrypted workspace will be mounted. edrive does not silently reuse the old workspace.
+3. Discover Google Drive's local My Drive folder. A mirrored folder is valid and a streamed folder is valid. If it is not discoverable, edrive first explains what to do, opens Google Drive, waits for confirmation, and then checks again. If necessary, it lets the user choose the local My Drive folder directly.
+4. Resolve the edrive Cryptomator vault. An existing Cryptomator vault is never silently assumed to belong to edrive. edrive uses its own non-secret marker inside its encrypted vault to recognize an edrive-managed vault.
+
+Before opening Cryptomator, setup explains the exact action the user needs to perform. For a new vault it says which vault name and storage location to choose. For an existing unregistered vault it explains how to add that vault. After the user confirms, edrive checks the resulting files and Cryptomator registration.
+
+## Isolation
+
+edrive does not own the Google Drive application or all of its local storage.
+
+edrive does not own the Cryptomator application or every Cryptomator vault on the machine.
+
+Only the selected Google Drive local root and the selected edrive vault are recorded in edrive configuration.
+
+An unrelated Cryptomator vault is left untouched. A foreign vault at the default `edrive` location causes setup to ask before adoption. If the user declines, setup asks for another location instead of overwriting the existing vault.
+
+The encrypted vault contains `.edrive-vault.json` as an ownership marker. The marker is itself inside the encrypted vault, so it is not part of the user's plaintext workspace.
+
+## Live workspace
+
+The configured workspace is a plaintext mount point, for example:
 
 ```
 ~/edrive
 ```
 
-edrive's private control state is separate:
+`edrive open`, `edrive cd`, and `edrive unlock` ensure that the selected edrive vault is available through Cryptomator before exposing the workspace.
+
+`edrive lock` only terminates the Cryptomator process that edrive started and tracks. It does not terminate an unrelated Cryptomator process.
+
+## Doctor
+
+`edrive doctor` is the diagnostic authority for the entire local lifecycle.
+
+It checks the configuration file, workspace, Google Drive application and local files, edrive vault ownership and completeness, Cryptomator registration, pinned tools, FUSE-T, device identities, and recovery-key state.
+
+Doctor continues checking independent parts even when one part is broken. It reports the disease and a concrete recovery direction, such as restoring a deleted CLI, making Google Drive files available, selecting a replacement workspace, or re-registering an edrive vault.
+
+If the configuration file itself is malformed or cannot be opened, doctor still reports that as a configuration problem instead of failing before the diagnostic starts.
+
+## Backup
+
+```
+edrive backup
+```
+
+Backup first accesses the edrive recovery item in macOS Keychain. On the first backup, the recovery identity is generated once and stored there. On later backups the same identity is reused.
+
+Backup then ensures the live workspace is unlocked before archiving it.
+
+The user chooses the destination folder with a Finder dialog. The last backup directory is remembered and used as the next dialog's starting location.
+
+The selected directory receives:
+
+```
+edrive-backup-YYYYMMDD-HHMMSS.tar.zst.age
+edrive-recovery-key.txt   # only when the key file is missing
+```
+
+The recovery-key file is never printed by edrive. An existing recovery-key file is validated against the current recovery identity and is not overwritten.
+
+Backup streams directly into the final destination through a temporary partial file. Failed partial output is removed.
+
+After a successful backup, the destination folder is opened in Finder.
+
+## Recovery
+
+The Cryptomator password and edrive recovery key are different things.
+
+The Cryptomator password unlocks the live vault and remains under Cryptomator's Keychain management.
+
+The edrive recovery key is independent backup-decryption material. It is stored in macOS Keychain and its matching recipient is included in every future backup.
+
+That separation means backup recovery does not require the live Cryptomator mount to be available.
+
+## Decode anywhere
+
+```
+edrive decode /path/to/backup.tar.zst.age /path/to/edrive-recovery-key.txt
+```
+
+`edrive decode` is intentionally independent of edrive setup. It only requires the `age` command and the two files supplied by the user.
+
+It removes the `.age` layer and writes the decrypted sibling next to the encrypted input:
+
+```
+backup.tar.zst.age  ->  backup.tar.zst
+```
+
+It does not automatically extract the tar/zstd archive.
+
+## Devices
+
+Device labels are the user-facing identity model:
+
+```
+edrive device add phone-1
+edrive device list
+edrive device remove phone-1
+```
+
+Private device identity material stays in the platform secure store. Only public recipient metadata and the label are kept in the local registry.
+
+Setup creates the default local device `mac-1` when one is not already registered.
+
+## State
+
+edrive keeps private control state under:
 
 ```
 ~/.edrive/
@@ -49,179 +157,9 @@ edrive's private control state is separate:
 └── tmp/
 ```
 
-The encrypted Cryptomator vault stays inside the user's existing Google Drive
-storage. The user never configures its local Google Drive path inside edrive.
+No encrypted backup archive or private recovery key is retained there after a backup.
 
-Google Drive is the sync/storage application. Cryptomator is the live
-encryption layer and FUSE-T provides the filesystem mount. edrive only
-orchestrates these pieces.
-
-## Setup
-
-```
-./bootstrap.sh
-source ~/.zshrc
-edrive setup
-```
-
-Setup asks for the workspace location once. The default is `~/edrive`.
-
-After that, setup automatically:
-
-- discovers the local Google Drive storage;
-- creates or reuses the edrive vault location;
-- checks the fixed edrive toolchain;
-- creates the default device identity `mac-1`;
-- opens Cryptomator for the one-time vault creation/registration step.
-
-No recovery key is displayed during setup.
-
-The recovery key is created lazily on the first backup, not during setup.
-
-## Open and lock
-
-`edrive open` unlocks the Cryptomator vault and opens the mounted workspace
-in Finder.
-
-`edrive cd` unlocks the workspace and prints its path. The shell integration
-installed by `bootstrap.sh` turns that into a real shell `cd`.
-
-```
-edrive cd
-code .
-```
-
-`edrive unlock` and `edrive lock` are the explicit lifecycle commands.
-
-## Backup
-
-There is one backup operation:
-
-```
-edrive backup
-```
-
-The flow is:
-
-1. edrive accesses the recovery key in macOS Keychain. On the first backup,
-   it creates that key once and stores it in Keychain.
-2. edrive unlocks the workspace when necessary.
-3. edrive builds the encrypted backup.
-4. A Finder folder chooser opens at the last backup directory.
-5. The encrypted backup is saved directly in the selected folder.
-6. The selected folder is opened in Finder.
-
-The backup filename is:
-
-```
-edrive-backup-YYYYMMDD-HHMMSS.tar.zst.age
-```
-
-edrive remembers the last backup directory.
-
-The recovery key is written as:
-
-```
-edrive-recovery-key.txt
-```
-
-only when that file is missing from the selected backup directory. The same
-recovery key is reused for later backups. edrive never prints the key.
-
-If a selected directory already contains a recovery key, edrive checks that it
-belongs to the same recovery identity before using the directory.
-
-No backup archive or private recovery key is kept in `~/.edrive/tmp` after
-the command finishes. Temporary sensitive files are removed.
-
-## How the recovery key works
-
-There are two different concepts:
-
-**Cryptomator password**
-
-Protects the live workspace. It stays under Cryptomator's own Keychain and is
-used by the Cryptomator CLI during unlock.
-
-**edrive recovery key**
-
-This is an age private identity. It is generated once and stored in the
-macOS Keychain under edrive's control. Its matching public recipient is added
-to every future backup.
-
-A backup is encrypted for all registered device identities plus the recovery
-recipient. That means:
-
-- a registered device can decrypt the backup using its own identity;
-- the recovery key can decrypt the backup independently of the Mac and
-  independently of Cryptomator.
-
-The recovery key is not the Cryptomator password.
-
-## Decode anywhere
-
-The decode command is intentionally independent of edrive setup:
-
-```
-edrive decode /path/to/edrive-backup-20261002-193000.tar.zst.age \
-  /path/to/edrive-recovery-key.txt
-```
-
-It only needs the `age` command installed.
-
-The decrypted sibling file is created automatically:
-
-```
-edrive-backup-20261002-193000.tar.zst
-```
-
-No Google Drive, Cryptomator, FUSE-T, edrive configuration, or device registry
-is required for this command.
-
-The decoded file is the decrypted archive layer. Normal Unix `tar`/zstd tools
-can be used to inspect or extract it separately.
-
-## Devices
-
-Device identities are named, so the user does not need to think in terms of
-cryptographic recipient strings.
-
-```
-edrive device add mac-1
-edrive device add phone-1
-edrive device list
-edrive device remove phone-1
-```
-
-Private identity material is stored in the platform secure store. Only the
-label and public recipient metadata are stored in `~/.edrive/devices.json`.
-
-Removing a device stops future backups from including that device. The
-recovery identity remains independent.
-
-## Failure model
-
-Normal commands stay small. They report the immediate error and point to
-`edrive doctor`.
-
-`edrive doctor` is the diagnostic authority for:
-
-- edrive configuration;
-- workspace;
-- Google Drive discovery;
-- Cryptomator registration;
-- age and zstd versions;
-- Cryptomator CLI;
-- FUSE-T;
-- device identities;
-- recovery key state.
-
-## Version policy
-
-The edrive-controlled versions are pinned in source and are changed only as
-part of an intentional edrive release.
-
-Current values:
+## Pinned dependencies
 
 ```
 age                1.3.2
@@ -229,16 +167,16 @@ zstd               1.5.7
 Cryptomator CLI    0.6.2
 ```
 
-edrive does not query an upstream `latest` release during setup.
+edrive does not fetch a moving `latest` dependency during setup.
 
-## Constraints
+## Design constraints
 
 - No remote edrive service.
 - No custom cryptography.
 - No second sync engine.
 - No Google OAuth handling inside edrive.
+- No silent adoption of unrelated Google Drive or Cryptomator resources.
 - No persistent plaintext backup archive.
-- No backup copies kept by edrive after export.
-- Private identity material is kept in the platform secure store.
-- Temporary private material is removed after use.
+- External applications keep ownership of their own credentials and infrastructure.
+- Temporary sensitive files have explicit cleanup.
 - Runtime behavior does not depend on the development repository layout.
