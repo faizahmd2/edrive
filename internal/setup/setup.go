@@ -158,9 +158,9 @@ func ensureVault(rc *rclone.Client) error {
 		}
 		if err := rc.SyncLocalToRemote(config.LocalVaultPath()); err != nil {
 			return err
-		default:
-		return fmt.Errorf("local vault contains files but is not a complete Cryptomator vault: %s", config.LocalVaultPath())
 		}
+	default:
+		return fmt.Errorf("local vault contains files but is not a complete Cryptomator vault: %s", config.LocalVaultPath())
 	}
 
 	state, err = vault.Inspect(config.LocalVaultPath())
