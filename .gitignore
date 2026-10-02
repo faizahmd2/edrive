@@ -1,0 +1,118 @@
+# ============================================================
+# OS / editor
+# ============================================================
+
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ============================================================
+# Go
+# ============================================================
+
+bin/
+dist/
+build/
+coverage.out
+coverage.html
+*.test
+
+# ============================================================
+# edrive local state
+# ============================================================
+
+.edrive/
+.runtime/
+runtime/
+tmp/
+temp/
+
+*.pid
+*.log
+
+# ============================================================
+# Local configuration
+# ============================================================
+
+config/local/
+config/*.local
+config/*.secret
+config/*.private
+config/recipients.txt
+config.sh
+
+# ============================================================
+# Identity / private key material
+# ============================================================
+
+identities/
+*.identity
+*.identity.txt
+
+*.key
+*.priv
+*.private
+
+# Private certificates / key pairs
+*.pem
+*.p12
+*.pfx
+*.pkcs12
+
+# ============================================================
+# Secrets / credentials
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+*.secret
+*.secrets
+*.credentials
+
+# ============================================================
+# Cryptomator / encrypted vault data
+# ============================================================
+
+vault/
+vaults/
+/cryptomator/
+*.cryptomator
+
+# If a vault or encrypted data is ever placed inside the repo
+# directory, keep it out of Git.
+edrive-vault/
+encrypted-data/
+
+# ============================================================
+# Recovery data
+# ============================================================
+
+recovery/
+recoveries/
+edrive-recovery/
+*.tar.zst
+*.tar.zst.age
+*.age
+
+# ============================================================
+# Local machine / generated state
+# ============================================================
+
+machine/
+local-state/
+state/
+
+# ============================================================
+# macOS application/runtime data accidentally copied here
+# ============================================================
+
+/Cryptomator/
