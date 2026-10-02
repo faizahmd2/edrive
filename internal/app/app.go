@@ -396,6 +396,9 @@ func (a App) Restore() error {
 
 	recoveryIdentity, keyErr := keychain.Get(keychain.RecoveryIdentity)
 	if keyErr != nil {
+		if keychain.Exists(keychain.RecoveryIdentity) {
+			return fmt.Errorf("recovery identity access was not granted")
+		}
 		if !isFile(keyPath) {
 			return fmt.Errorf("recovery identity is unavailable")
 		}
