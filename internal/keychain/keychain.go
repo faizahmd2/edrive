@@ -106,6 +106,14 @@ func remove(account string) error {
 	return nil
 }
 
+func LegacyIdentityExists(account string) bool {
+	return legacyExists(account)
+}
+
+func LegacyRecoveryExists() bool {
+	return legacyExists("recovery-identity")
+}
+
 func GetLegacyIdentity(account string) (string, error) {
 	return getLegacy(account)
 }
@@ -150,4 +158,13 @@ func removeLegacy(account string) error {
 		return err
 	}
 	return nil
+}
+
+func legacyExists(account string) bool {
+	return exec.Command(
+		"/usr/bin/security",
+		"find-generic-password",
+		"-s", Service,
+		"-a", account,
+	).Run() == nil
 }
