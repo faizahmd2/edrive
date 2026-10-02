@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/faiz/edrive/internal/app"
-	"github.com/faiz/edrive/internal/config"
-	"github.com/faiz/edrive/internal/decode"
-	"github.com/faiz/edrive/internal/setup"
-	"github.com/faiz/edrive/internal/ui"
+	"github.com/faizahmd2/edrive/internal/app"
+	"github.com/faizahmd2/edrive/internal/config"
+	"github.com/faizahmd2/edrive/internal/decode"
+	"github.com/faizahmd2/edrive/internal/setup"
+	"github.com/faizahmd2/edrive/internal/ui"
 )
 
 const version = "0.1.0"
