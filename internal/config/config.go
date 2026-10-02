@@ -17,6 +17,7 @@ type Config struct {
 	DataRoot        string `json:"data_root"`
 	StorageProvider string `json:"storage_provider"`
 	StorageName     string `json:"storage_name"`
+	StorageRoot     string `json:"storage_root,omitempty"`
 	LastBackupDir   string `json:"last_backup_dir,omitempty"`
 	AgePath         string `json:"age_path,omitempty"`
 	ZstdPath        string `json:"zstd_path,omitempty"`
@@ -106,6 +107,7 @@ func Load(path string) (Config, error) {
 	cfg.DataRoot = ExpandOrDefault(cfg.DataRoot, DefaultDataRoot())
 	cfg.StorageProvider = ExpandOrDefault(cfg.StorageProvider, "google-drive")
 	cfg.StorageName = ExpandOrDefault(cfg.StorageName, "edrive")
+	cfg.StorageRoot = Expand(cfg.StorageRoot)
 	cfg.LastBackupDir = Expand(cfg.LastBackupDir)
 	cfg.AgePath = Expand(cfg.AgePath)
 	cfg.ZstdPath = Expand(cfg.ZstdPath)
