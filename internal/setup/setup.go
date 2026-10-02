@@ -214,7 +214,7 @@ func findCryptomatorCLI(cfg *config.Config) (string, error) {
 		filepath.Join(home, "Desktop/local-infra/tools/cryptomator-cli.app/Contents/MacOS/cryptomator-cli"),
 	)
 	for _, path := range unique(candidates) {
-		if isExecutable(path) {
+		if isExecutable(path) && toolVersionMatches(path, toolchain.CryptomatorCLIVersion) {
 			return path, nil
 		}
 	}
@@ -256,8 +256,11 @@ func ensureVault(vaultPath string) error {
 func ensureDefaultDevice(ageKeygen string) error {
 	if devices, err := device.List(); err != nil {
 		return err
-	} else if len(devices) > 0 {
-		return nil
+	}
+	for _, d := range devices {
+		if d.Label == "mac-1" {
+			return nil
+		}
 	}
 	if keychain.IdentityExists("mac-1") {
 		identity, err := keychain.GetIdentity("mac-1")
