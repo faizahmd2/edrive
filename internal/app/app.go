@@ -66,84 +66,93 @@ func loadRecipients(path string) (int, error) {
 func (a App) Doctor() error {
 	fmt.Println("EDRIVE DOCTOR")
 	fmt.Println()
-	checks := []struct {
+
+	type check struct {
 		name   string
 		ok     bool
 		detail string
-	}{}
-
-	mountInfo, err := os.Stat(a.Config.Mount)
-	checks = append(checks, struct {
-		name   string
-		ok     bool
-		detail string
-	}{"Mount path", err == nil && mountInfo.IsDir(), a.Config.Mount})
-
-	vaultOK := vaultAvailable(a.Config.Mount)
-
-	vaultStatus := "✓"
-	vaultDetail := "mounted and readable"
-
-	if !vaultOK {
-		vaultStatus = "!"
-		vaultDetail = "locked"
 	}
+	var checks []check
 
-	fmt.Printf("%-18s %s  %s\n", "Vault", vaultStatus, vaultDetail)
-
-	// checks = append(checks, struct {
-	// 	name   string
-	// 	ok     bool
-	// 	detail string
-	// }{"Vault view", vaultOK, vaultDetail})
-
-	recInfo, err := os.Stat(a.Config.Recipients)
-	recOK := err == nil && !recInfo.IsDir()
-	recDetail := a.Config.Recipients
-	if recOK {
-		if n, recErr := loadRecipients(a.Config.Recipients); recErr != nil {
-			recOK = false
-			recDetail = recErr.Error()
+	checks = append(checks, check{"Config", a.Config.ConfigFound, a.Config.ConfigPath})
+	if a.Config.DataRoot != "" {
+		checks = append(checks, check{"Data root", isDir(a.Config.DataRoot), a.Config.DataRoot})
+	}
+	if a.Config.GoogleDriveRoot != "" {
+		checks = append(checks, check{"Google Drive root", isDir(a.Config.GoogleDriveRoot), a.Config.GoogleDriveRoot})
+	}
+	if a.Config.Mount != "" {
+		checks = append(checks, check{"Mount path", isDir(a.Config.Mount), a.Config.Mount})
+	}
+	if a.Config.RecoveryDir != "" {
+		checks = append(checks, check{"Recovery dir", isDir(a.Config.RecoveryDir), a.Config.RecoveryDir})
+	}
+	if a.Config.Recipients != "" {
+		n, err := loadRecipients(a.Config.Recipients)
+		if err != nil {
+			checks = append(checks, check{"Recipients", false, err.Error()})
 		} else {
-			recDetail = fmt.Sprintf("%d recipient(s)", n)
+			checks = append(checks, check{"Recipients", true, fmt.Sprintf("%d recipient(s)", n)})
 		}
 	}
-	checks = append(checks, struct {
-		name   string
-		ok     bool
-		detail string
-	}{"Recipients", recOK, recDetail})
-	if err := util.RequireBinary("age"); err == nil {
-		checks = append(checks, struct {
-			name   string
-			ok     bool
-			detail string
-		}{"age", true, util.Version("age")})
-	} else {
-		checks = append(checks, struct {
-			name   string
-			ok     bool
-			detail string
-		}{"age", false, err.Error()})
+	if a.Config.MacIdentity != "" {
+		err := validateAgeIdentity(a.Config.MacIdentity)
+		checks = append(checks, check{"Mac identity", err == nil, detailPathOrError(a.Config.MacIdentity, err)})
 	}
-	if err := util.RequireBinary("zstd"); err == nil {
-		checks = append(checks, struct {
-			name   string
-			ok     bool
-			detail string
-		}{"zstd", true, util.Version("zstd")})
-	} else {
-		checks = append(checks, struct {
-			name   string
-			ok     bool
-			detail string
-		}{"zstd", false, err.Error()})
+	if a.Config.RecoveryIdentity != "" {
+		err := validateAgeIdentity(a.Config.RecoveryIdentity)
+		if err != nil {
+			checks = append(checks, check{"Recovery identity", false, "not available: " + a.Config.RecoveryIdentity})
+		} else {
+			checks = append(checks, check{"Recovery identity", true, a.Config.RecoveryIdentity})
+		}
 	}
-	checks = append(checks, struct {
-		name   string
-		ok     bool
-		detail string
-	}{"Recovery dir", ensureDir(a.Config.RecoveryDir) == nil, a.Config.RecoveryDir})
+
+	checks = append(checks, check{"age", binaryAvailable("age"), binaryDetail("age")})
+	checks = append(checks, check{"zstd", binaryAvailable("zstd"), binaryDetail("zstd")})
+	checks = append(checks, check{"FUSE-T", caskOrAppAvailable("fuse-t", nil), binaryOrAppDetail("fuse-t", nil)})
+	checks = append(checks, check{"Google Drive", caskOrAppAvailable("google-drive", []string{"/Applications/Google Drive.app"}), binaryOrAppDetail("google-drive", []string{"/Applications/Google Drive.app"})})
+	if a.Config.GoogleDriveRoot != "" && isDir(a.Config.GoogleDriveRoot) {
+		running := processRunning("Google Drive")
+		checks = append(checks, check{"Drive process", running, "running"} )
+		if !running {
+			checks[len(checks)-1].detail = "not running"
+		}
+	}
+
+	cliOK := isExecutableFile(a.Config.CryptomatorCLI)
+	cliDetail := a.Config.CryptomatorCLI
+	if a.Config.CryptomatorCLI == "" {
+		cliDetail = "not configured"
+	}
+	checks = append(checks, check{"Cryptomator CLI", cliOK, cliDetail})
+
+	vaultOK := isDir(a.Config.CryptomatorVault)
+	vaultDetail := a.Config.CryptomatorVault
+	if a.Config.CryptomatorVault == "" {
+		vaultDetail = "not configured"
+	}
+	checks = append(checks, check{"Cryptomator vault", vaultOK, vaultDetail})
+
+	vaultIDOK := strings.TrimSpace(a.Config.CryptomatorVaultID) != ""
+	vaultIDDetail := a.Config.CryptomatorVaultID
+	if !vaultIDOK {
+		vaultIDDetail = "not registered/configured"
+	}
+	checks = append(checks, check{"Vault ID", vaultIDOK, vaultIDDetail})
+
+	mounterOK := strings.TrimSpace(a.Config.CryptomatorMounter) != ""
+	checks = append(checks, check{"FUSE mounter", mounterOK, a.Config.CryptomatorMounter})
+
+	if vaultIDOK && runtime.GOOS == "darwin" {
+		err := exec.Command(
+			"/usr/bin/security",
+			"find-generic-password",
+			"-s", a.Config.CryptomatorKeychainService,
+			"-a", a.Config.CryptomatorVaultID,
+		).Run()
+		checks = append(checks, check{"Keychain item", err == nil, "Cryptomator vault credential"})
+	}
 
 	all := true
 	for _, c := range checks {
@@ -152,14 +161,92 @@ func (a App) Doctor() error {
 			mark = "✗"
 			all = false
 		}
-		fmt.Printf("%-18s %s  %s\n", c.name, mark, c.detail)
+		fmt.Printf("%-20s %s  %s\n", c.name, mark, c.detail)
 	}
+
 	fmt.Println()
-	if !all {
-		return fmt.Errorf("doctor found one or more problems")
+	if all {
+		fmt.Println("Status: HEALTHY")
+		return nil
 	}
-	fmt.Println("Status: HEALTHY")
-	return nil
+	return fmt.Errorf("doctor found one or more problems")
+}
+
+func isDir(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func isExecutableFile(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
+}
+
+func binaryAvailable(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func binaryDetail(name string) string {
+	if path, err := exec.LookPath(name); err == nil {
+		return path
+	}
+	return "not installed"
+}
+
+func caskOrAppAvailable(cask string, appPaths []string) bool {
+	if _, err := exec.LookPath("brew"); err == nil {
+		if err := exec.Command("brew", "list", "--cask", cask).Run(); err == nil {
+			return true
+		}
+	}
+	for _, path := range appPaths {
+		if isDir(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func binaryOrAppDetail(name string, appPaths []string) string {
+	if _, err := exec.LookPath("brew"); err == nil {
+		if err := exec.Command("brew", "list", "--cask", name).Run(); err == nil {
+			return "installed"
+		}
+	}
+	for _, path := range appPaths {
+		if isDir(path) {
+			return path
+		}
+	}
+	return "not installed"
+}
+
+func processRunning(name string) bool {
+	return exec.Command("pgrep", "-f", name).Run() == nil
+}
+
+func validateAgeIdentity(path string) error {
+	if path == "" {
+		return fmt.Errorf("not configured")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	return exec.Command("age-keygen", "-y", path).Run()
+}
+
+func detailPathOrError(path string, err error) string {
+	if err == nil {
+		return path
+	}
+	return err.Error()
 }
 
 func (a App) Status() error {
