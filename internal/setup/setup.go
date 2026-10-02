@@ -203,6 +203,17 @@ func ensureCask(name string) error {
 		fmt.Printf("✓ %s\n", name)
 		return nil
 	}
+
+	// Homebrew can be unaware of an application that was installed manually
+	// or by another installer. Reuse known applications instead of trying to
+	// overwrite them.
+	for _, appPath := range knownApplicationPaths(name) {
+		if info, err := os.Stat(appPath); err == nil && info.IsDir() {
+			fmt.Printf("✓ %s (%s)\n", name, appPath)
+			return nil
+		}
+	}
+
 	fmt.Printf("→ installing %s\n", name)
 	cmd := exec.Command("brew", "install", "--cask", name)
 	cmd.Stdout = os.Stdout
@@ -212,6 +223,17 @@ func ensureCask(name string) error {
 	}
 	fmt.Printf("✓ %s\n", name)
 	return nil
+}
+
+func knownApplicationPaths(name string) []string {
+	switch name {
+	case "cryptomator":
+		return []string{"/Applications/Cryptomator.app"}
+	case "google-drive":
+		return []string{"/Applications/Google Drive.app"}
+	default:
+		return nil
+	}
 }
 
 func detectGoogleDriveRoot(home string) (string, error) {
