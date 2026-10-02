@@ -54,8 +54,12 @@ func (c *Client) Unlock() error {
 	if vaultID == "" {
 		vaultID, err = DiscoverVaultID(c.cfg.VaultPath)
 		if err != nil {
-			return fmt.Errorf("discover Cryptomator vault")
+			return fmt.Errorf("the Cryptomator vault is not registered on this Mac")
 		}
+	}
+	credential, err := cryptomatorCredential(vaultID)
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(c.cfg.RuntimeDir, 0700); err != nil {
@@ -88,22 +92,14 @@ func (c *Client) Unlock() error {
 		waitDone <- cmd.Wait()
 	}()
 
-	security := exec.Command(
-		"/usr/bin/security",
-		"find-generic-password",
-		"-s", KeychainService,
-		"-a", vaultID,
-		"-w",
-	)
-	security.Stdout = cryptStdin
-	security.Stderr = io.Discard
-
-	if err := security.Run(); err != nil {
+	if _, err := io.WriteString(cryptStdin, credential+"\n"); err != nil {
+		credential = ""
 		_ = cryptStdin.Close()
 		terminate(cmd.Process.Pid)
 		<-waitDone
-		return fmt.Errorf("read Cryptomator credential from macOS Keychain")
+		return fmt.Errorf("send the Cryptomator password to its CLI: %w", err)
 	}
+	credential = ""
 
 	if err := cryptStdin.Close(); err != nil {
 		terminate(cmd.Process.Pid)
@@ -125,7 +121,7 @@ func (c *Client) Unlock() error {
 
 		select {
 		case <-waitDone:
-			return fmt.Errorf("Cryptomator CLI exited before mounting")
+			return fmt.Errorf("Cryptomator CLI exited before mounting; check that the vault is available locally and its password is stored in Keychain")
 		default:
 		}
 		time.Sleep(250 * time.Millisecond)
