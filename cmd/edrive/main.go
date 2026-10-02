@@ -44,6 +44,10 @@ func main() {
 		run(command, setup.Run)
 	default:
 		cfg, err := config.Load(config.DefaultPath())
+		if command == "doctor" {
+			a := app.App{Config: cfg, ConfigError: err}
+			run(command, a.Doctor)
+		}
 		if err != nil {
 			fail(command, err)
 		}
@@ -82,7 +86,7 @@ func run(command string, fn func() error) {
 
 func fail(command string, err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
-	if command != "doctor" && command != "decode" {
+	if command != "doctor" && command != "decode" && command != "setup" {
 		fmt.Fprintln(os.Stderr, "Run 'edrive doctor' for diagnostics.")
 	}
 	os.Exit(1)
@@ -108,8 +112,8 @@ Other:
   edrive help
   edrive version
 
-The user chooses the workspace location once during setup.
-Google Drive and Cryptomator stay external; edrive only orchestrates them.
+Each fresh setup asks for the workspace location again.
+Google Drive and Cryptomator remain external; edrive discovers and uses only the resources explicitly selected for it.
 
 Backup:
   edrive backup
