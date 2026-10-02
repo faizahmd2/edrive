@@ -34,14 +34,16 @@ Every `edrive setup` is a fresh setup.
 
 If configuration already exists, edrive first asks whether to rebuild it. The prompt tells the user to run `edrive doctor` first when they want to inspect the existing installation.
 
-Fresh setup does not delete Google Drive data, Cryptomator vaults, or Keychain identities. It rebuilds edrive's local configuration and device registry.
+Fresh setup does not delete Google Drive data, Cryptomator vaults, or Keychain identities. It rebuilds edrive's local configuration while keeping existing device identities so existing backups remain decryptable.
 
 The setup flow is:
 
 1. Check all required local applications and pinned tools together. Missing pieces are listed together with the next action.
 2. Choose the folder where the decrypted workspace will be mounted. edrive does not silently reuse the old workspace.
-3. Discover Google Drive's local My Drive folder. A mirrored folder is valid and a streamed folder is valid. If it is not discoverable, edrive first explains what to do, opens Google Drive, waits for confirmation, and then checks again. If necessary, it lets the user choose the local My Drive folder directly.
-4. Resolve the edrive Cryptomator vault. An existing Cryptomator vault is never silently assumed to belong to edrive. edrive uses its own non-secret marker inside its encrypted vault to recognize an edrive-managed vault.
+3. Choose which local Google Drive My Drive edrive should use. If multiple known Google Drive locations exist, edrive presents those exact locations as explicit choices instead of using a general folder chooser that could accidentally select the workspace. A separate "choose another" option is available for a local mirror folder that edrive could not discover automatically. A mirrored folder is valid and a streamed folder is valid. If it is not discoverable, edrive explains what to do, opens Google Drive, waits for confirmation, and checks again.
+4. Resolve the edrive Cryptomator vault. An existing Cryptomator vault is never silently assumed to belong to edrive. edrive keeps a small non-secret ownership binding outside the encrypted vault so it can identify the selected edrive vault without placing metadata inside encrypted data.
+
+The selected Google Drive storage root can never be the same as, contain, or be contained by the configured plaintext workspace.
 
 Before opening Cryptomator, setup explains the exact action the user needs to perform. For a new vault it says which vault name and storage location to choose. For an existing unregistered vault it explains how to add that vault. After the user confirms, edrive checks the resulting files and Cryptomator registration.
 
@@ -156,6 +158,8 @@ edrive keeps private control state under:
 ├── runtime/
 └── tmp/
 ```
+
+The vault ownership binding is also stored under `~/.edrive/vault.json`. It is non-secret metadata.
 
 No encrypted backup archive or private recovery key is retained there after a backup.
 
