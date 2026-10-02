@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/faiz/edrive/internal/config"
-	"github.com/faiz/edrive/internal/toolchain"
+	"github.com/faizahmd2/edrive/internal/config"
+	"github.com/faizahmd2/edrive/internal/toolchain"
 )
 
 type Paths struct {
