@@ -1,0 +1,18 @@
+# Machine-specific configuration for edrive.
+# Run "edrive setup" to generate the real config.
+#
+# All paths should be absolute. Do not put passwords, private keys,
+# age identities, recovery archives, or vault contents in this file.
+
+EDRIVE_HOME="/absolute/path/to/edrive"
+EDRIVE_MOUNT="/absolute/path/to/Cryptomator/mount/edrive"
+EDRIVE_RECOVERY_DIR="/absolute/path/to/edrive-recovery"
+EDRIVE_RECIPIENTS="/absolute/path/to/edrive/config/recipients.txt"
+EDRIVE_SNAPSHOT_KEEP=20
+
+EDRIVE_CRYPTOMATOR_VAULT="/absolute/path/to/google-drive/edrive"
+EDRIVE_CRYPTOMATOR_VAULT_ID="cryptomator-vault-id"
+EDRIVE_CRYPTOMATOR_CLI="/absolute/path/to/cryptomator-cli.app/Contents/MacOS/cryptomator-cli"
+EDRIVE_CRYPTOMATOR_MOUNTER="org.cryptomator.frontend.fuse.mount.FuseTMountProvider"
+EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE="Cryptomator"
+EDRIVE_RUNTIME_DIR="/absolute/path/to/Library/Application Support/edrive"
