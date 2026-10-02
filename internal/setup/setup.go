@@ -48,7 +48,7 @@ func Run() error {
 		return err
 	}
 
-	root, err := ensureGoogleDriveRoot()
+	root, err := ensureGoogleDriveRoot(cfg.DataRoot)
 	if err != nil {
 		return err
 	}
@@ -131,6 +131,7 @@ func confirmFreshSetup() (bool, error) {
 	}
 	return true, nil
 }
+
 func chooseWorkspace(cfg *config.Config) (bool, error) {
 	defaultDir := config.DefaultDataRoot()
 	_ = os.MkdirAll(defaultDir, 0700)
@@ -209,27 +210,38 @@ func ensureDependencies(cfg *config.Config) error {
 	return fmt.Errorf("required components are not ready")
 }
 
-func ensureGoogleDriveRoot() (string, error) {
+func ensureGoogleDriveRoot(dataRoot string) (string, error) {
 	drive := provider.GoogleDrive{StorageName: "edrive"}
 	candidates, err := drive.Candidates()
 	if err != nil {
 		return "", err
 	}
+
 	if len(candidates) == 1 {
+		root := provider.NormalizeRoot(candidates[0])
+		if err := validateGoogleDriveRoot(root, dataRoot); err != nil {
+			return "", err
+		}
 		fmt.Println()
 		fmt.Println("Google Drive local My Drive found:")
-		fmt.Println(" ", candidates[0])
-		return candidates[0], nil
+		fmt.Println(" ", root)
+		return root, nil
 	}
+
 	if len(candidates) > 1 {
 		fmt.Println()
 		fmt.Println("Step 3/4: choose which local Google Drive My Drive edrive should use.")
 		fmt.Println()
 		fmt.Println("I found more than one local Google Drive My Drive.")
-		for _, candidate := range candidates {
-			fmt.Println(" ", candidate)
-		}
-		path, selected, err := ui.ChooseFolder("Choose the Google Drive My Drive folder edrive should use", candidates[0])
+		fmt.Println("Choose one of these known Google Drive locations, or choose another local folder explicitly.")
+		fmt.Println()
+
+		options := append(append([]string{}, candidates...), "Choose another local Google Drive folder...")
+		choice, selected, err := ui.ChooseOption(
+			"Choose the Google Drive location edrive should use",
+			options,
+			0,
+		)
 		if err != nil {
 			return "", err
 		}
@@ -237,11 +249,18 @@ func ensureGoogleDriveRoot() (string, error) {
 			fmt.Println("Setup cancelled.")
 			return "", nil
 		}
-		path = provider.NormalizeRoot(path)
-		if !isDir(path) {
-			return "", fmt.Errorf("the selected Google Drive folder is unavailable")
+
+		if choice == "Choose another local Google Drive folder..." {
+			return chooseGoogleDriveFolder(dataRoot, candidates[0])
 		}
-		return path, nil
+		root := provider.NormalizeRoot(choice)
+		if err := validateGoogleDriveRoot(root, dataRoot); err != nil {
+			return "", err
+		}
+		fmt.Println()
+		fmt.Println("Google Drive location selected:")
+		fmt.Println(" ", root)
+		return root, nil
 	}
 
 	fmt.Println()
@@ -255,19 +274,7 @@ func ensureGoogleDriveRoot() (string, error) {
 		return "", err
 	}
 	if already {
-		path, selected, err := ui.ChooseFolder("Choose your local Google Drive My Drive folder", config.Home())
-		if err != nil {
-			return "", err
-		}
-		if selected {
-			path = provider.NormalizeRoot(path)
-			if isDir(path) {
-				return path, nil
-			}
-			fmt.Println("That folder is not available. I will open Google Drive instead.")
-		} else {
-			fmt.Println("No folder selected. I will open Google Drive instead.")
-		}
+		return chooseGoogleDriveFolder(dataRoot, config.Home())
 	}
 
 	fmt.Println()
@@ -289,12 +296,21 @@ func ensureGoogleDriveRoot() (string, error) {
 		return "", err
 	}
 	if len(candidates) == 1 {
-		fmt.Println("Google Drive local My Drive found:", candidates[0])
-		return candidates[0], nil
+		root := provider.NormalizeRoot(candidates[0])
+		if err := validateGoogleDriveRoot(root, dataRoot); err != nil {
+			return "", err
+		}
+		fmt.Println("Google Drive local My Drive found:", root)
+		return root, nil
 	}
 	if len(candidates) > 1 {
 		fmt.Println("Multiple local Google Drive locations are available. Please choose one.")
-		path, selected, err := ui.ChooseFolder("Choose the Google Drive My Drive folder edrive should use", candidates[0])
+		options := append(append([]string{}, candidates...), "Choose another local Google Drive folder...")
+		choice, selected, err := ui.ChooseOption(
+			"Choose the Google Drive location edrive should use",
+			options,
+			0,
+		)
 		if err != nil {
 			return "", err
 		}
@@ -302,29 +318,55 @@ func ensureGoogleDriveRoot() (string, error) {
 			fmt.Println("Setup cancelled.")
 			return "", nil
 		}
-		path = provider.NormalizeRoot(path)
-		if !isDir(path) {
-			return "", fmt.Errorf("the selected Google Drive folder is unavailable")
+		if choice == "Choose another local Google Drive folder..." {
+			return chooseGoogleDriveFolder(dataRoot, candidates[0])
 		}
-		return path, nil
+		root := provider.NormalizeRoot(choice)
+		if err := validateGoogleDriveRoot(root, dataRoot); err != nil {
+			return "", err
+		}
+		fmt.Println("Google Drive location selected:", root)
+		return root, nil
 	}
 
-	fmt.Println()
-	fmt.Println("Google Drive still did not expose a local My Drive folder.")
-	fmt.Println("I will let you choose the local My Drive folder directly.")
-	path, selected, err := ui.ChooseFolder("Select your Google Drive My Drive folder", config.Home())
-	if err != nil {
-		return "", err
+	return chooseGoogleDriveFolder(dataRoot, config.Home())
+}
+
+func chooseGoogleDriveFolder(dataRoot, defaultDir string) (string, error) {
+	for {
+		path, selected, err := ui.ChooseFolder("Choose the local Google Drive My Drive folder edrive should use", defaultDir)
+		if err != nil {
+			return "", err
+		}
+		if !selected {
+			fmt.Println("Setup cancelled.")
+			return "", nil
+		}
+
+		root := provider.NormalizeRoot(path)
+		if err := validateGoogleDriveRoot(root, dataRoot); err != nil {
+			fmt.Println("That folder cannot be used as Google Drive storage:")
+			fmt.Println(" ", err)
+			fmt.Println("Choose a different local Google Drive folder.")
+			continue
+		}
+		fmt.Println()
+		fmt.Println("Google Drive location selected:")
+		fmt.Println(" ", root)
+		return root, nil
 	}
-	if !selected {
-		fmt.Println("Setup cancelled.")
-		return "", nil
+}
+
+func validateGoogleDriveRoot(root, dataRoot string) error {
+	root = filepath.Clean(root)
+	dataRoot = filepath.Clean(dataRoot)
+	if !isDir(root) {
+		return fmt.Errorf("the selected Google Drive folder is unavailable")
 	}
-	path = provider.NormalizeRoot(path)
-	if !isDir(path) {
-		return "", fmt.Errorf("the selected Google Drive folder is unavailable")
+	if root == dataRoot || pathInside(root, dataRoot) || pathInside(dataRoot, root) {
+		return fmt.Errorf("Google Drive storage cannot be the same as, or contain, the edrive workspace")
 	}
-	return path, nil
+	return nil
 }
 
 func ensureVault(root string) (string, error) {
@@ -614,7 +656,7 @@ func isExecutable(path string) bool {
 
 func unique(paths []string) []string {
 	out := make([]string, 0, len(paths))
-	seen := make(map[string]struct{}, len(paths))
+	seen := make(map[string]struct{})
 	for _, path := range paths {
 		path = filepath.Clean(path)
 		if path == "." {
