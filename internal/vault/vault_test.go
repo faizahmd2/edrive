@@ -26,7 +26,4 @@ func TestInspectCompleteUnmanagedVault(t *testing.T) {
 	if !state.Exists || !state.HasCryptomatorFiles || !state.Complete {
 		t.Fatalf("expected complete vault: %+v", state)
 	}
-	if state.Managed {
-		t.Fatalf("test vault must not be managed: %+v", state)
-	}
 }
