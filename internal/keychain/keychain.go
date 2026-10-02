@@ -39,9 +39,7 @@ func Set(account, secret string) error {
 	if !validAccount(account) {
 		return fmt.Errorf("invalid edrive Keychain account")
 	}
-
-	secret = strings.TrimSpace(secret)
-	if secret == "" {
+	if strings.TrimSpace(secret) == "" {
 		return fmt.Errorf("cannot store empty %s", account)
 	}
 
@@ -75,14 +73,15 @@ func Delete(account string) error {
 	if !validAccount(account) {
 		return fmt.Errorf("invalid edrive Keychain account")
 	}
-
-	cmd := exec.Command(
+	if !Exists(account) {
+		return nil
+	}
+	if err := exec.Command(
 		"/usr/bin/security",
 		"delete-generic-password",
 		"-s", Service,
 		"-a", account,
-	)
-	if err := cmd.Run(); err != nil && !strings.Contains(err.Error(), "could not be found in the keychain") {
+	).Run(); err != nil {
 		return fmt.Errorf("delete %s from macOS Keychain: %w", account, err)
 	}
 	return nil
