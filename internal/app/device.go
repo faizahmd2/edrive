@@ -36,6 +36,12 @@ func (a App) Device(args []string) error {
 }
 
 func (a App) addDevice(label string) error {
+	if !a.Config.ConfigFound {
+		return fmt.Errorf("edrive is not set up; run 'edrive setup' first")
+	}
+	if strings.TrimSpace(a.Config.AgePath) == "" {
+		return fmt.Errorf("edrive age tool is not configured; run 'edrive setup' first")
+	}
 	keygenPath, err := ageutil.KeygenPath(a.Config.AgePath)
 	if err != nil {
 		return err
