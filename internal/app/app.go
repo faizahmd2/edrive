@@ -335,7 +335,7 @@ func (a App) ensureUnlocked() error {
 		return nil
 	}
 	if !isDir(workspace) {
-		return fmt.Errorf("workspace is missing at %s; run 'edrive setup'")
+		return fmt.Errorf("workspace is missing at %s; run 'edrive setup'", workspace)
 	}
 
 	vaultPath := config.LocalVaultPath()
