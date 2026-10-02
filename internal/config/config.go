@@ -42,12 +42,12 @@ func Expand(path string) string {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, path[2:])
 	}
-	return os.ExpandEnv(path)
+	return path
 }
 
 // Load accepts intentionally simple shell-style KEY=value lines. It does not
-// execute the config file. Supported values may be unquoted, single-quoted or
-// double-quoted. Environment variables such as $HOME are expanded afterwards.
+// execute the config file or expand environment variables. Setup writes
+// absolute paths so the config remains machine-specific and unambiguous.
 func Load(path string) (Config, error) {
 	path = Expand(path)
 	if path == "" {
@@ -85,51 +85,27 @@ func Load(path string) (Config, error) {
 		}
 		parts := strings.SplitN(line, "=", 2)
 		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
+		value := unquote(strings.TrimSpace(parts[1]))
 		if !allowed[key] {
 			return Config{}, fmt.Errorf("unsupported config key %q", key)
 		}
-		value = unquote(value)
-		values[key] = os.ExpandEnv(value)
+		values[key] = value
 	}
 
 	if err := scanner.Err(); err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
-	for i := 0; i < 10; i++ {
-		changed := false
-
-		for key, value := range values {
-			expanded := os.Expand(value, func(name string) string {
-				if v, ok := values[name]; ok {
-					return v
-				}
-				return os.Getenv(name)
-			})
-
-			if expanded != value {
-				values[key] = expanded
-				changed = true
-			}
-		}
-
-		if !changed {
-			break
-		}
-	}
-
 	cfg := Config{
-
 		Home:                       Expand(values["EDRIVE_HOME"]),
 		Mount:                      Expand(values["EDRIVE_MOUNT"]),
 		RecoveryDir:                Expand(values["EDRIVE_RECOVERY_DIR"]),
 		Recipients:                 Expand(values["EDRIVE_RECIPIENTS"]),
 		CryptomatorVault:           Expand(values["EDRIVE_CRYPTOMATOR_VAULT"]),
-		CryptomatorVaultID:         Expand(values["EDRIVE_CRYPTOMATOR_VAULT_ID"]),
+		CryptomatorVaultID:         strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_VAULT_ID"]),
 		CryptomatorCLI:             Expand(values["EDRIVE_CRYPTOMATOR_CLI"]),
-		CryptomatorMounter:         Expand(values["EDRIVE_CRYPTOMATOR_MOUNTER"]),
-		CryptomatorKeychainService: Expand(values["EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE"]),
+		CryptomatorMounter:         strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_MOUNTER"]),
+		CryptomatorKeychainService: strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE"]),
 		RuntimeDir:                 Expand(values["EDRIVE_RUNTIME_DIR"]),
 		SnapshotKeep:               20,
 	}
@@ -137,23 +113,24 @@ func Load(path string) (Config, error) {
 	if cfg.CryptomatorKeychainService == "" {
 		cfg.CryptomatorKeychainService = "Cryptomator"
 	}
-
 	if cfg.RuntimeDir == "" {
 		home, _ := os.UserHomeDir()
-		cfg.RuntimeDir = filepath.Join(
-			home,
-			"Library/Application Support/edrive",
-		)
+		cfg.RuntimeDir = filepath.Join(home, "Library/Application Support/edrive")
+	}
+	if cfg.Home == "" {
+		cfg.Home = filepath.Dir(path)
 	}
 
 	if cfg.CryptomatorVault == "" ||
 		cfg.CryptomatorVaultID == "" ||
 		cfg.CryptomatorCLI == "" ||
-		cfg.CryptomatorMounter == "" ||
-		cfg.RuntimeDir == "" {
+		cfg.CryptomatorMounter == "" {
 		return Config{}, fmt.Errorf(
-			"config must define EDRIVE_CRYPTOMATOR_VAULT, EDRIVE_CRYPTOMATOR_VAULT_ID, EDRIVE_CRYPTOMATOR_CLI, EDRIVE_CRYPTOMATOR_MOUNTER and EDRIVE_RUNTIME_DIR",
+			"config must define EDRIVE_CRYPTOMATOR_VAULT, EDRIVE_CRYPTOMATOR_VAULT_ID, EDRIVE_CRYPTOMATOR_CLI and EDRIVE_CRYPTOMATOR_MOUNTER",
 		)
+	}
+	if cfg.Mount == "" || cfg.RecoveryDir == "" || cfg.Recipients == "" {
+		return Config{}, fmt.Errorf("config must define EDRIVE_MOUNT, EDRIVE_RECOVERY_DIR and EDRIVE_RECIPIENTS")
 	}
 
 	if v := strings.TrimSpace(values["EDRIVE_SNAPSHOT_KEEP"]); v != "" {
@@ -163,18 +140,13 @@ func Load(path string) (Config, error) {
 		}
 		cfg.SnapshotKeep = n
 	}
-	if cfg.Mount == "" || cfg.RecoveryDir == "" || cfg.Recipients == "" {
-		return Config{}, fmt.Errorf("config must define EDRIVE_MOUNT, EDRIVE_RECOVERY_DIR and EDRIVE_RECIPIENTS")
-	}
-	if cfg.Home == "" {
-		cfg.Home = filepath.Dir(path)
-	}
+
 	return cfg, nil
 }
 
 func unquote(v string) string {
 	if len(v) >= 2 {
-		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == ''' && v[len(v)-1] == ''') {
 			if v[0] == '"' {
 				if s, err := strconv.Unquote(v); err == nil {
 					return s
