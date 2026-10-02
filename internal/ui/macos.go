@@ -107,10 +107,8 @@ edrive() {
   fi
   "$HOME/.local/bin/edrive" "$@"
 }
-# <<< edrive shell integration <<<` + "
-"
+# <<< edrive shell integration <<<` + "\n"
 }
-
 func Confirm(prompt string) (bool, error) {
 	fmt.Print(prompt + " [y/N] ")
 	line, err := input.ReadString('\n')
