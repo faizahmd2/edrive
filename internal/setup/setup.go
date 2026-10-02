@@ -33,7 +33,8 @@ func Run() error {
 		return err
 	}
 
-	migrateLegacy(&cfg)
+	legacy := legacyValues()
+	seedFromLegacy(&cfg, legacy)
 
 	if err := os.MkdirAll(config.Home(), 0700); err != nil {
 		return err
@@ -45,7 +46,7 @@ func Run() error {
 	if err := chooseWorkspace(&cfg); err != nil {
 		return err
 	}
-	if err := ensureWorkspace(cfg.DataRoot); err != nil {
+	if err := ensureWorkspace(cfg.DataRoot, cfg.ConfigFound); err != nil {
 		return err
 	}
 	if err := ensureDependencies(&cfg); err != nil {
@@ -78,7 +79,10 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	if _, err := device.Ensure("mac-1", keygenPath); err != nil {
+	if err := ensureDefaultDevice(keygenPath); err != nil {
+		return err
+	}
+	if err := migrateRecoveryKey(); err != nil {
 		return err
 	}
 
@@ -89,7 +93,6 @@ func Run() error {
 	fmt.Println()
 	fmt.Println("Setup complete.")
 	fmt.Println("Workspace:", cfg.DataRoot)
-	fmt.Println("Storage:  Google Drive")
 	fmt.Println()
 	fmt.Println("Use:")
 	fmt.Println("  edrive open")
@@ -99,9 +102,11 @@ func Run() error {
 }
 
 func chooseWorkspace(cfg *config.Config) error {
-	if cfg.ConfigFound {
+	if cfg.ConfigFound || cfg.DataRoot != config.DefaultDataRoot() {
+		fmt.Println("Reusing workspace:", cfg.DataRoot)
 		return nil
 	}
+
 	answer, err := askPath("Where should edrive keep the working folder? ["+cfg.DataRoot+"]: ", cfg.DataRoot)
 	if err != nil {
 		return err
@@ -110,11 +115,14 @@ func chooseWorkspace(cfg *config.Config) error {
 	return nil
 }
 
-func ensureWorkspace(path string) error {
+func ensureWorkspace(path string, existingConfig bool) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return fmt.Errorf("create workspace: %w", err)
 	}
 	if mounted(path) {
+		return nil
+	}
+	if existingConfig {
 		return nil
 	}
 
@@ -129,10 +137,6 @@ func ensureWorkspace(path string) error {
 }
 
 func ensureDependencies(cfg *config.Config) error {
-	if runtime.GOOS != "darwin" {
-		return nil
-	}
-
 	agePath, err := ensureAge()
 	if err != nil {
 		return err
@@ -191,13 +195,12 @@ func findCryptomatorCLI(cfg *config.Config) (string, error) {
 	if cfg.CryptomatorCLI != "" {
 		candidates = append(candidates, cfg.CryptomatorCLI)
 	}
-
+	home, _ := os.UserHomeDir()
 	candidates = append(candidates,
 		filepath.Join(config.ToolsDir(), "cryptomator-cli", toolchain.CryptomatorCLIVersion, "cryptomator-cli.app", "Contents", "MacOS", "cryptomator-cli"),
 		"/Applications/cryptomator-cli.app/Contents/MacOS/cryptomator-cli",
-		filepath.Join(os.Getenv("HOME"), "Desktop/local-infra/tools/cryptomator-cli.app/Contents/MacOS/cryptomator-cli"),
+		filepath.Join(home, "Desktop/local-infra/tools/cryptomator-cli.app/Contents/MacOS/cryptomator-cli"),
 	)
-
 	for _, path := range unique(candidates) {
 		if isExecutable(path) {
 			return path, nil
@@ -220,11 +223,11 @@ func ensureVault(vaultPath string) error {
 
 	_ = ui.OpenApplication("Cryptomator")
 	fmt.Println()
-	fmt.Println("Cryptomator needs to create/add the edrive vault once.")
-	fmt.Println("Use this folder as the vault location:")
+	fmt.Println("Cryptomator needs this one-time action:")
+	fmt.Println("create or add the edrive vault using this folder:")
 	fmt.Println(vaultPath)
 	fmt.Println()
-	fmt.Print("Press Enter after the vault is created or added: ")
+	fmt.Print("Press Enter after the vault is ready: ")
 	if _, err := input.ReadString('\n'); err != nil && err != io.EOF {
 		return err
 	}
@@ -238,66 +241,41 @@ func ensureVault(vaultPath string) error {
 	return nil
 }
 
-func migrateLegacy(cfg *config.Config) {
-	if cfg.ConfigFound {
-		return
-	}
-
-	legacy := legacyValues()
-	if cfg.DataRoot == config.DefaultDataRoot() {
-		if mount := config.Expand(legacy["EDRIVE_MOUNT"]); mount != "" {
-			cfg.DataRoot = mount
-		}
-	}
-	if cfg.CryptomatorCLI == "" {
-		cfg.CryptomatorCLI = config.Expand(legacy["EDRIVE_CRYPTOMATOR_CLI"])
-	}
-	if cfg.StorageRoot == "" {
-		if root := config.Expand(legacy["EDRIVE_GOOGLE_DRIVE_ROOT"]); root != "" {
-			cfg.StorageRoot = root
-		} else if vault := config.Expand(legacy["EDRIVE_CRYPTOMATOR_VAULT"]); vault != "" {
-			cfg.StorageRoot = filepath.Dir(vault)
-		}
-	}
-
-	_ = migrateLegacyDevice()
-	_ = migrateLegacyRecovery()
-}
-
-func migrateLegacyDevice() error {
-	if _, err := device.List(); err != nil {
+func ensureDefaultDevice(ageKeygen string) error {
+	if devices, err := device.List(); err != nil {
 		return err
-	}
-	if keychain.IdentityExists("mac-1") {
+	} else if len(devices) > 0 {
 		return nil
 	}
-
-	// Older edrive builds used a fixed Keychain account.
+	if keychain.IdentityExists("mac-1") {
+		identity, err := keychain.GetIdentity("mac-1")
+		if err != nil {
+			return fmt.Errorf("device Keychain access was not granted")
+		}
+		_, err = device.Import("mac-1", identity, ageKeygen)
+		return err
+	}
 	if value, err := keychain.GetLegacyIdentity("device-identity"); err == nil {
 		if err := keychain.SetIdentity("mac-1", value); err != nil {
 			return err
 		}
 		_ = keychain.DeleteLegacyIdentity("device-identity")
-		return nil
+		_, err = device.Import("mac-1", value, ageKeygen)
+		return err
 	}
 
-	paths := []string{
-		filepath.Join(os.Getenv("HOME"), "Library/Application Support/edrive/identities/mac.identity"),
+	home, _ := os.UserHomeDir()
+	legacyPath := filepath.Join(home, "Library/Application Support/edrive/identities/mac.identity")
+	if b, err := os.ReadFile(legacyPath); err == nil && strings.TrimSpace(string(b)) != "" {
+		_, err = device.Import("mac-1", string(b), ageKeygen)
+		return err
 	}
-	for _, path := range paths {
-		if b, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(b)) != "" {
-			keygen, err := ageutil.KeygenPath(findAgePath())
-			if err != nil {
-				return err
-			}
-			_, err = device.Import("mac-1", string(b), keygen)
-			return err
-		}
-	}
-	return nil
+
+	_, err := device.AddGenerated("mac-1", ageKeygen)
+	return err
 }
 
-func migrateLegacyRecovery() error {
+func migrateRecoveryKey() error {
 	if keychain.RecoveryExists() {
 		return nil
 	}
@@ -309,9 +287,10 @@ func migrateLegacyRecovery() error {
 		return nil
 	}
 
+	home, _ := os.UserHomeDir()
 	paths := []string{
-		filepath.Join(os.Getenv("HOME"), "Desktop/local-infra/configs/edrive/edrive-recovery-identity.txt"),
-		filepath.Join(os.Getenv("HOME"), "Desktop/local-infra/edrive/edrive-recovery-identity.txt"),
+		filepath.Join(home, "Desktop/local-infra/configs/edrive/edrive-recovery-identity.txt"),
+		filepath.Join(home, "Desktop/local-infra/edrive/edrive-recovery-identity.txt"),
 	}
 	for _, path := range paths {
 		if b, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(b)) != "" {
@@ -321,16 +300,27 @@ func migrateLegacyRecovery() error {
 	return nil
 }
 
-func findAgePath() string {
-	if path, err := exec.LookPath("age"); err == nil {
-		return path
+func seedFromLegacy(cfg *config.Config, values map[string]string) {
+	if cfg.DataRoot == config.DefaultDataRoot() {
+		if value := config.Expand(values["EDRIVE_MOUNT"]); value != "" {
+			cfg.DataRoot = value
+		}
 	}
-	return filepath.Join(config.ToolsDir(), "age", toolchain.AgeVersion, "age")
+	if cfg.CryptomatorCLI == "" {
+		cfg.CryptomatorCLI = config.Expand(values["EDRIVE_CRYPTOMATOR_CLI"])
+	}
+	if cfg.StorageRoot == "" {
+		if value := config.Expand(values["EDRIVE_GOOGLE_DRIVE_ROOT"]); value != "" {
+			cfg.StorageRoot = value
+		} else if value := config.Expand(values["EDRIVE_CRYPTOMATOR_VAULT"]); value != "" {
+			cfg.StorageRoot = filepath.Dir(value)
+		}
+	}
 }
 
 func legacyValues() map[string]string {
 	values := make(map[string]string)
-	home := os.Getenv("HOME")
+	home, _ := os.UserHomeDir()
 	paths := []string{
 		filepath.Join(home, "Library/Application Support/edrive/config.sh"),
 		filepath.Join(home, "Desktop/local-infra/edrive/config.sh"),
