@@ -1,12 +1,10 @@
 package setup
 
 import (
-	"archive/zip"
 	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/faiz/edrive/internal/config"
 )
@@ -23,14 +20,6 @@ const (
 	cryptomatorMounter = "org.cryptomator.frontend.fuse.mount.FuseTMountProvider"
 	keychainService    = "Cryptomator"
 )
-
-type githubRelease struct {
-	TagName string `json:"tag_name"`
-	Assets  []struct {
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-	} `json:"assets"`
-}
 
 type cryptomatorSettings struct {
 	Directories []struct {
@@ -48,7 +37,6 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
 	}
-
 	if _, err := exec.LookPath("brew"); err != nil {
 		return fmt.Errorf("Homebrew is required; install it and run edrive setup again")
 	}
@@ -57,20 +45,15 @@ func Run() error {
 	fmt.Println()
 	fmt.Println("Checking dependencies...")
 
-	if err := ensureFormula("age"); err != nil {
-		return err
+	for _, name := range []string{"age", "zstd"} {
+		if err := ensureFormula(name); err != nil {
+			return err
+		}
 	}
-	if err := ensureFormula("zstd"); err != nil {
-		return err
-	}
-	if err := ensureCask("fuse-t"); err != nil {
-		return err
-	}
-	if err := ensureCask("google-drive"); err != nil {
-		return err
-	}
-	if err := ensureCask("cryptomator"); err != nil {
-		return err
+	for _, name := range []string{"fuse-t", "google-drive", "cryptomator"} {
+		if err := ensureCask(name); err != nil {
+			return err
+		}
 	}
 
 	repoRoot := filepath.Dir(config.DefaultPath())
@@ -81,10 +64,7 @@ func Run() error {
 	toolsDir := filepath.Join(home, "Desktop/local-infra/tools")
 	identityDir := filepath.Join(runtimeDir, "identities")
 	macIdentity := filepath.Join(identityDir, "mac.identity")
-	recoveryIdentity := filepath.Join(
-		home,
-		"Desktop/local-infra/configs/edrive/edrive-recovery-identity.txt",
-	)
+	recoveryIdentity := filepath.Join(home, "Desktop/local-infra/configs/edrive/edrive-recovery-identity.txt")
 	recipientsPath := filepath.Join(configDir, "recipients.txt")
 
 	for _, dir := range []string{
@@ -99,8 +79,7 @@ func Run() error {
 			return fmt.Errorf("create directory %s: %w", dir, err)
 		}
 	}
-
-	fmt.Println("✓ base directories ready")
+	fmt.Println("✓ local directories ready")
 
 	driveRoot, err := detectGoogleDriveRoot(home)
 	if err != nil {
@@ -112,28 +91,32 @@ func Run() error {
 	cliPath, err := findCryptomatorCLI(home, toolsDir)
 	if err != nil {
 		fmt.Println()
-		fmt.Println("Cryptomator CLI was not found.")
-		ok, promptErr := askYesNo(
-			"Download the latest official Cryptomator CLI from GitHub? [Y/n] ",
-			true,
-		)
-		if promptErr != nil {
-			return promptErr
-		}
-		if !ok {
-			return fmt.Errorf("Cryptomator CLI is required; run edrive setup again after installing it")
-		}
-		cliPath, err = downloadCryptomatorCLI(toolsDir)
-		if err != nil {
-			return err
-		}
+		fmt.Println("Cryptomator CLI is not installed.")
+		fmt.Println("Install the official Cryptomator CLI, then run:")
+		fmt.Println("  edrive setup")
+		return err
 	}
 	fmt.Printf("✓ Cryptomator CLI: %s\n", cliPath)
 
-	if err := ensureMacIdentity(macIdentity); err != nil {
-		return err
+	if err := validateIdentity(macIdentity); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf(
+				"Mac identity not found at %s; run edrive identity generate --output %s first",
+				macIdentity,
+				macIdentity,
+			)
+		}
+		return fmt.Errorf("Mac identity is invalid: %w", err)
+	}
+	if err := os.Chmod(macIdentity, 0600); err != nil {
+		return fmt.Errorf("protect Mac identity: %w", err)
 	}
 	fmt.Printf("✓ Mac identity: %s\n", macIdentity)
+
+	macRecipient, err := ageRecipient(macIdentity)
+	if err != nil {
+		return fmt.Errorf("read Mac recipient: %w", err)
+	}
 
 	recoveryRecipient := ""
 	if _, err := os.Stat(recoveryIdentity); err == nil {
@@ -148,10 +131,6 @@ func Run() error {
 		fmt.Printf("! Recovery identity not found: %s\n", recoveryIdentity)
 	}
 
-	macRecipient, err := ageRecipient(macIdentity)
-	if err != nil {
-		return fmt.Errorf("read Mac recipient: %w", err)
-	}
 	if err := ensureRecipients(recipientsPath, macRecipient, recoveryRecipient); err != nil {
 		return err
 	}
@@ -159,30 +138,24 @@ func Run() error {
 
 	vaultPath := filepath.Join(driveRoot, "edrive")
 	vaultMarker := filepath.Join(vaultPath, "vault.cryptomator")
-
 	if info, err := os.Stat(vaultMarker); err != nil || info.IsDir() {
 		fmt.Println()
 		fmt.Printf("Cryptomator vault is not initialized at:\n%s\n\n", vaultPath)
-		fmt.Println("The setup cannot create a Cryptomator vault itself.")
 		fmt.Println("Open Cryptomator and create/add the vault at that exact location.")
-		fmt.Println("Store the vault password in the macOS Keychain.")
-		fmt.Println()
+		fmt.Println("Store the password in the macOS Keychain.")
 		_ = exec.Command("open", "-a", "Cryptomator").Run()
+		fmt.Println()
 		fmt.Println("After the vault exists, run: edrive setup")
 		return nil
 	}
 
-	settingsPath := filepath.Join(
-		home,
-		"Library/Application Support/Cryptomator/settings.json",
-	)
+	settingsPath := filepath.Join(home, "Library/Application Support/Cryptomator/settings.json")
 	vaultID, err := findVaultID(settingsPath, vaultPath, home)
 	if err != nil {
 		fmt.Println()
-		fmt.Println("Vault exists, but Cryptomator has not registered it yet.")
+		fmt.Println("The vault exists, but Cryptomator has not registered it yet.")
 		fmt.Printf("Vault: %s\n", vaultPath)
-		fmt.Println("Open Cryptomator, add the vault, then run:")
-		fmt.Println("  edrive setup")
+		fmt.Println("Open Cryptomator, add the vault, then run: edrive setup")
 		return nil
 	}
 
@@ -202,9 +175,6 @@ func Run() error {
 
 	fmt.Println()
 	fmt.Println("✓ configuration written")
-	fmt.Printf("✓ Cryptomator vault: %s\n", vaultPath)
-	fmt.Printf("✓ Vault ID: %s\n", vaultID)
-	fmt.Println()
 	fmt.Println("Setup complete.")
 	fmt.Println()
 	fmt.Println("Next:")
@@ -218,7 +188,6 @@ func ensureFormula(name string) error {
 		fmt.Printf("✓ %s\n", name)
 		return nil
 	}
-
 	fmt.Printf("→ installing %s\n", name)
 	cmd := exec.Command("brew", "install", name)
 	cmd.Stdout = os.Stdout
@@ -235,7 +204,6 @@ func ensureCask(name string) error {
 		fmt.Printf("✓ %s\n", name)
 		return nil
 	}
-
 	fmt.Printf("→ installing %s\n", name)
 	cmd := exec.Command("brew", "install", "--cask", name)
 	cmd.Stdout = os.Stdout
@@ -257,10 +225,9 @@ func detectGoogleDriveRoot(home string) (string, error) {
 	entries, err := os.ReadDir(cloudStorage)
 	if err == nil {
 		for _, entry := range entries {
-			if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "GoogleDrive-") {
-				continue
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), "GoogleDrive-") {
+				candidates = append(candidates, filepath.Join(cloudStorage, entry.Name(), "My Drive"))
 			}
-			candidates = append(candidates, filepath.Join(cloudStorage, entry.Name(), "My Drive"))
 		}
 	}
 
@@ -278,21 +245,17 @@ func detectGoogleDriveRoot(home string) (string, error) {
 	}
 
 	sort.Strings(valid)
-
 	switch len(valid) {
 	case 0:
-		return "", fmt.Errorf(
-			"Google Drive My Drive was not found; sign in to Google Drive and run edrive setup again",
-		)
+		return "", fmt.Errorf("Google Drive My Drive was not found; sign in to Google Drive and run edrive setup again")
 	case 1:
 		return valid[0], nil
 	default:
-		fmt.Println("Multiple Google Drive locations were found:")
+		fmt.Println("Multiple Google Drive locations found:")
 		for i, candidate := range valid {
 			fmt.Printf("  %d) %s\n", i+1, candidate)
 		}
 		fmt.Printf("Choose one [1-%d]: ", len(valid))
-
 		reader := bufio.NewReader(os.Stdin)
 		var choice int
 		if _, err := fmt.Fscan(reader, &choice); err != nil {
@@ -329,10 +292,7 @@ func findCryptomatorCLI(home, toolsDir string) (string, error) {
 		if err != nil || found != "" {
 			return err
 		}
-		if d.IsDir() || d.Name() != "cryptomator-cli" {
-			return nil
-		}
-		if isExecutableFile(path) {
+		if !d.IsDir() && d.Name() == "cryptomator-cli" && isExecutableFile(path) {
 			found = path
 		}
 		return nil
@@ -340,256 +300,65 @@ func findCryptomatorCLI(home, toolsDir string) (string, error) {
 	if found != "" {
 		return found, nil
 	}
-
 	return "", fmt.Errorf("Cryptomator CLI not found")
 }
 
 func isExecutableFile(path string) bool {
 	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	return info.Mode().Perm()&0111 != 0
-}
-
-func downloadCryptomatorCLI(toolsDir string) (string, error) {
-	req, err := http.NewRequest(
-		http.MethodGet,
-		"https://api.github.com/repos/cryptomator/cli/releases/latest",
-		nil,
-	)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "edrive-setup")
-
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch Cryptomator CLI release metadata: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Cryptomator CLI release lookup returned HTTP %d", resp.StatusCode)
-	}
-
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", fmt.Errorf("decode Cryptomator CLI release metadata: %w", err)
-	}
-
-	suffix := "-mac-arm64.zip"
-	if runtime.GOARCH == "amd64" {
-		suffix = "-mac-x86_64.zip"
-	}
-
-	var assetURL string
-	for _, asset := range release.Assets {
-		if strings.HasSuffix(asset.Name, suffix) {
-			assetURL = asset.BrowserDownloadURL
-			break
-		}
-	}
-	if assetURL == "" {
-		return "", fmt.Errorf("no macOS %s Cryptomator CLI release asset found", suffix)
-	}
-	if release.TagName == "" {
-		return "", fmt.Errorf("Cryptomator CLI release has no version tag")
-	}
-
-	resp, err = client.Get(assetURL)
-	if err != nil {
-		return "", fmt.Errorf("download Cryptomator CLI: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Cryptomator CLI download returned HTTP %d", resp.StatusCode)
-	}
-
-	tempDir, err := os.MkdirTemp(toolsDir, ".cryptomator-cli-")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(tempDir)
-
-	zipPath := filepath.Join(tempDir, "cryptomator-cli.zip")
-	zipFile, err := os.OpenFile(zipPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
-		return "", err
-	}
-	_, copyErr := io.Copy(zipFile, resp.Body)
-	closeErr := zipFile.Close()
-	if copyErr != nil {
-		return "", copyErr
-	}
-	if closeErr != nil {
-		return "", closeErr
-	}
-
-	targetDir := filepath.Join(toolsDir, "cryptomator-cli", release.TagName)
-	if err := os.MkdirAll(targetDir, 0700); err != nil {
-		return "", err
-	}
-	if err := unzipSafe(zipPath, targetDir); err != nil {
-		return "", fmt.Errorf("extract Cryptomator CLI: %w", err)
-	}
-
-	cliPath := filepath.Join(targetDir, "cryptomator-cli.app/Contents/MacOS/cryptomator-cli")
-	if !isExecutableFile(cliPath) {
-		return "", fmt.Errorf("Cryptomator CLI executable not found after extraction: %s", cliPath)
-	}
-	if err := os.Chmod(cliPath, 0700); err != nil {
-		return "", fmt.Errorf("make Cryptomator CLI executable: %w", err)
-	}
-
-	fmt.Printf("✓ Cryptomator CLI downloaded: %s\n", release.TagName)
-	return cliPath, nil
-}
-
-func unzipSafe(zipPath, destination string) error {
-	zr, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-
-	root := filepath.Clean(destination)
-
-	for _, file := range zr.File {
-		name := filepath.Clean(file.Name)
-		if name == "." || name == ".." || filepath.IsAbs(name) || strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
-			return fmt.Errorf("unsafe zip path: %q", file.Name)
-		}
-		target := filepath.Join(root, name)
-
-		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0700); err != nil {
-				return err
-			}
-			continue
-		}
-		if file.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing symlink in release archive: %s", file.Name)
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
-			return err
-		}
-
-		in, err := file.Open()
-		if err != nil {
-			return err
-		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-		if err != nil {
-			_ = in.Close()
-			return err
-		}
-		_, copyErr := io.Copy(out, in)
-		closeErr := out.Close()
-		_ = in.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-	}
-	return nil
-}
-
-func ensureMacIdentity(path string) error {
-	if info, err := os.Stat(path); err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("Mac identity path is a directory: %s", path)
-		}
-		if err := validateIdentity(path); err != nil {
-			return fmt.Errorf("existing Mac identity is invalid: %w", err)
-		}
-		return os.Chmod(path, 0600)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	ok, err := askYesNo(
-		fmt.Sprintf("Mac identity not found at %s. Generate a new one? [Y/n] ", path),
-		true,
-	)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("Mac identity is required")
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	cmd := exec.Command("age-keygen", "-pq", "-o", path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("generate Mac identity: %w", err)
-	}
-	return os.Chmod(path, 0600)
+	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
 }
 
 func validateIdentity(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
 	if err := exec.Command("age-keygen", "-y", path).Run(); err != nil {
 		return fmt.Errorf("age identity cannot be read: %w", err)
 	}
 	return nil
 }
 
-func ageRecipient(identityPath string) (string, error) {
-	cmd := exec.Command("age-keygen", "-y", identityPath)
-	out, err := cmd.Output()
+func ageRecipient(path string) (string, error) {
+	out, err := exec.Command("age-keygen", "-y", path).Output()
 	if err != nil {
 		return "", err
 	}
 	recipient := strings.TrimSpace(string(out))
 	if !strings.HasPrefix(recipient, "age1") {
-		return "", fmt.Errorf("unexpected age recipient: %q", recipient)
+		return "", fmt.Errorf("unexpected age recipient output")
 	}
 	return recipient, nil
 }
 
 func ensureRecipients(path string, recipients ...string) error {
-	existing := []string{}
+	var lines []string
+	seen := make(map[string]bool)
+
 	if b, err := os.ReadFile(path); err == nil {
-		existing = strings.Split(string(b), "\n")
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if strings.HasPrefix(line, "#") {
+				lines = append(lines, line)
+				continue
+			}
+			if !strings.HasPrefix(line, "age1") {
+				return fmt.Errorf("invalid recipient in %s: %q", path, line)
+			}
+			if !seen[line] {
+				seen[line] = true
+				lines = append(lines, line)
+			}
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 
-	seen := make(map[string]bool)
-	var lines []string
-	for _, line := range existing {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "#") {
-			lines = append(lines, line)
-			continue
-		}
-		if !strings.HasPrefix(line, "age1") {
-			return fmt.Errorf("invalid recipient in %s: %q", path, line)
-		}
-		if !seen[line] {
-			seen[line] = true
-			lines = append(lines, line)
-		}
-	}
-
 	for _, recipient := range recipients {
-		recipient = strings.TrimSpace(recipient)
 		if recipient == "" || seen[recipient] {
 			continue
-		}
-		if !strings.HasPrefix(recipient, "age1") {
-			return fmt.Errorf("invalid age recipient: %q", recipient)
 		}
 		seen[recipient] = true
 		lines = append(lines, recipient)
@@ -598,9 +367,7 @@ func ensureRecipients(path string, recipients ...string) error {
 	if len(lines) == 0 {
 		return fmt.Errorf("no age recipients available")
 	}
-
-	content := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
 		return fmt.Errorf("write recipients file: %w", err)
 	}
 	return os.Chmod(path, 0600)
@@ -609,29 +376,28 @@ func ensureRecipients(path string, recipients ...string) error {
 func findVaultID(settingsPath, vaultPath, home string) (string, error) {
 	b, err := os.ReadFile(settingsPath)
 	if err != nil {
-		return "", fmt.Errorf("Cryptomator settings not found: %w", err)
+		return "", err
 	}
 
 	var settings cryptomatorSettings
 	if err := json.Unmarshal(b, &settings); err != nil {
-		return "", fmt.Errorf("parse Cryptomator settings: %w", err)
+		return "", err
 	}
 
 	target := canonicalPath(vaultPath)
-	for _, dir := range settings.Directories {
-		if dir.ID == "" || dir.Path == "" {
+	for _, entry := range settings.Directories {
+		if entry.ID == "" || entry.Path == "" {
 			continue
 		}
-		p := dir.Path
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(home, p)
+		path := entry.Path
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(home, path)
 		}
-		if canonicalPath(p) == target {
-			return dir.ID, nil
+		if canonicalPath(path) == target {
+			return entry.ID, nil
 		}
 	}
-
-	return "", fmt.Errorf("vault is not registered in Cryptomator settings")
+	return "", fmt.Errorf("vault not registered in Cryptomator settings")
 }
 
 func canonicalPath(path string) string {
@@ -669,7 +435,7 @@ func writeConfig(
 		return err
 	}
 
-	content := strings.Join([]string{
+	lines := []string{
 		fmt.Sprintf("EDRIVE_HOME=%q", repoRoot),
 		fmt.Sprintf("EDRIVE_MOUNT=%q", mount),
 		fmt.Sprintf("EDRIVE_RECOVERY_DIR=%q", recoveryDir),
@@ -681,7 +447,8 @@ func writeConfig(
 		fmt.Sprintf("EDRIVE_CRYPTOMATOR_MOUNTER=%q", cryptomatorMounter),
 		fmt.Sprintf("EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE=%q", keychainService),
 		fmt.Sprintf("EDRIVE_RUNTIME_DIR=%q", runtimeDir),
-	}, "\n") + "\n"
+	}
+	content := strings.Join(lines, "\n") + "\n"
 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -692,6 +459,7 @@ func writeConfig(
 	return os.Chmod(path, 0600)
 }
 
+// Keep setup's input handling intentionally small.
 func askYesNo(prompt string, defaultYes bool) (bool, error) {
 	fmt.Print(prompt)
 	reader := bufio.NewReader(os.Stdin)
