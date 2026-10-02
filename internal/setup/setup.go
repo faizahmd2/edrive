@@ -23,12 +23,7 @@ import (
 	"github.com/faiz/edrive/internal/keychain"
 	"github.com/faiz/edrive/internal/provider"
 	"github.com/faiz/edrive/internal/ui"
-)
-
-const (
-	ageVersion            = "1.3.2"
-	zstdVersion           = "1.5.7"
-	cryptomatorCLIVersion = "0.6.2"
+	"github.com/faiz/edrive/internal/toolchain"
 )
 
 var input = bufio.NewReader(os.Stdin)
@@ -196,12 +191,12 @@ func ensureSystemDependencies(cfg *config.Config) error {
 }
 
 func ensureAge() (string, error) {
-	if path, err := exec.LookPath("age"); err == nil && versionMatches(path, ageVersion) {
+	if path, err := exec.LookPath("age"); err == nil && versionMatches(path, toolchain.AgeVersion) {
 		return path, nil
 	}
 
-	target := filepath.Join(config.DefaultToolsDir(), "age", ageVersion, "age")
-	if isExecutableFile(target) && versionMatches(target, ageVersion) {
+	target := filepath.Join(config.DefaultToolsDir(), "age", toolchain.AgeVersion, "age")
+	if isExecutableFile(target) && versionMatches(target, toolchain.AgeVersion) {
 		return target, nil
 	}
 
@@ -210,15 +205,15 @@ func ensureAge() (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("age %s is required", ageVersion)
+		return "", fmt.Errorf("age %s is required", toolchain.AgeVersion)
 	}
 	return downloadAge()
 }
 
 func downloadAge() (string, error) {
-	url := "https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-darwin-arm64.tar.gz"
+	url := "toolchain.AgeAssetURL"
 	expectedSHA := "e2020b073c44f692685a24d6abc378817eb81ffaaf49fd0531ef8565f767f2f5"
-	targetDir := filepath.Join(config.DefaultToolsDir(), "age", ageVersion)
+	targetDir := filepath.Join(config.DefaultToolsDir(), "age", toolchain.AgeVersion)
 
 	if err := os.MkdirAll(targetDir, 0700); err != nil {
 		return "", err
@@ -247,16 +242,16 @@ func downloadAge() (string, error) {
 	path := filepath.Join(targetDir, "age")
 	keygen := filepath.Join(targetDir, "age-keygen")
 	if !isExecutableFile(path) || !isExecutableFile(keygen) {
-		return "", fmt.Errorf("pinned age %s asset is incomplete", ageVersion)
+		return "", fmt.Errorf("pinned age %s asset is incomplete", toolchain.AgeVersion)
 	}
-	if !versionMatches(path, ageVersion) || !versionMatches(keygen, ageVersion) {
-		return "", fmt.Errorf("pinned age %s asset failed version verification", ageVersion)
+	if !versionMatches(path, toolchain.AgeVersion) || !versionMatches(keygen, toolchain.AgeVersion) {
+		return "", fmt.Errorf("pinned age %s asset failed version verification", toolchain.AgeVersion)
 	}
 	return path, nil
 }
 
 func ensureZstd() (string, error) {
-	if path, err := exec.LookPath("zstd"); err == nil && versionMatches(path, zstdVersion) {
+	if path, err := exec.LookPath("zstd"); err == nil && versionMatches(path, toolchain.ZstdVersion) {
 		return path, nil
 	}
 
@@ -265,7 +260,7 @@ func ensureZstd() (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("zstd %s is required", zstdVersion)
+		return "", fmt.Errorf("zstd %s is required", toolchain.ZstdVersion)
 	}
 	if err := brewInstall("zstd"); err != nil {
 		return "", err
@@ -275,15 +270,15 @@ func ensureZstd() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("zstd is not available after installation")
 	}
-	if !versionMatches(path, zstdVersion) {
-		return "", fmt.Errorf("zstd version mismatch: edrive requires %s", zstdVersion)
+	if !versionMatches(path, toolchain.ZstdVersion) {
+		return "", fmt.Errorf("zstd version mismatch: edrive requires %s", toolchain.ZstdVersion)
 	}
 	return path, nil
 }
 
 func ensureCryptomatorCLI() (string, error) {
 	candidates := []string{
-		filepath.Join(config.DefaultToolsDir(), "cryptomator-cli", cryptomatorCLIVersion, "cryptomator-cli.app", "Contents", "MacOS", "cryptomator-cli"),
+		filepath.Join(config.DefaultToolsDir(), "cryptomator-cli", toolchain.CryptomatorCLIVersion, "cryptomator-cli.app", "Contents", "MacOS", "cryptomator-cli"),
 		"/Applications/cryptomator-cli.app/Contents/MacOS/cryptomator-cli",
 	}
 	if legacy := legacyValue("EDRIVE_CRYPTOMATOR_CLI"); legacy != "" {
@@ -305,14 +300,14 @@ func ensureCryptomatorCLI() (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("Cryptomator CLI %s is required", cryptomatorCLIVersion)
+		return "", fmt.Errorf("Cryptomator CLI %s is required", toolchain.CryptomatorCLIVersion)
 	}
 	return downloadCryptomatorCLI()
 }
 
 func downloadCryptomatorCLI() (string, error) {
-	url := "https://github.com/cryptomator/cli/releases/download/0.6.2/cryptomator-cli-0.6.2-mac-x64.zip"
-	targetDir := filepath.Join(config.DefaultToolsDir(), "cryptomator-cli", cryptomatorCLIVersion)
+	url := "toolchain.CryptomatorCLIAssetURL"
+	targetDir := filepath.Join(config.DefaultToolsDir(), "cryptomator-cli", toolchain.CryptomatorCLIVersion)
 
 	if err := os.MkdirAll(targetDir, 0700); err != nil {
 		return "", err
@@ -332,12 +327,12 @@ func downloadCryptomatorCLI() (string, error) {
 		return "", err
 	}
 	if err := unzipSafe(archive, targetDir); err != nil {
-		return "", fmt.Errorf("extract Cryptomator CLI %s: %w", cryptomatorCLIVersion, err)
+		return "", fmt.Errorf("extract Cryptomator CLI %s: %w", toolchain.CryptomatorCLIVersion, err)
 	}
 
 	path := filepath.Join(targetDir, "cryptomator-cli.app", "Contents", "MacOS", "cryptomator-cli")
 	if !isExecutableFile(path) {
-		return "", fmt.Errorf("pinned Cryptomator CLI %s asset is incomplete", cryptomatorCLIVersion)
+		return "", fmt.Errorf("pinned Cryptomator CLI %s asset is incomplete", toolchain.CryptomatorCLIVersion)
 	}
 	if err := os.Chmod(path, 0700); err != nil {
 		return "", err
