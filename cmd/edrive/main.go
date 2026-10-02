@@ -8,10 +8,9 @@ import (
 	"github.com/faizahmd2/edrive/internal/config"
 	"github.com/faizahmd2/edrive/internal/decode"
 	"github.com/faizahmd2/edrive/internal/setup"
-	"github.com/faizahmd2/edrive/internal/ui"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -35,17 +34,16 @@ func main() {
 			fail(command, err)
 		}
 		fmt.Println("Recovered:", output)
-	case "shell-init":
-		if len(os.Args) != 3 || os.Args[2] != "zsh" {
-			fail(command, fmt.Errorf("usage: edrive shell-init zsh"))
-		}
-		fmt.Print(ui.ShellInitZsh())
 	case "setup":
 		run(command, setup.Run)
 	case "doctor":
 		cfg, err := config.Load(config.DefaultPath())
 		a := app.App{Config: cfg, ConfigError: err}
 		run(command, a.Doctor)
+	case "remove":
+		cfg, err := config.Load(config.DefaultPath())
+		a := app.App{Config: cfg, ConfigError: err}
+		run(command, a.Remove)
 	default:
 		cfg, err := config.Load(config.DefaultPath())
 		if err != nil {
@@ -56,12 +54,12 @@ func main() {
 		switch command {
 		case "open":
 			run(command, a.Open)
-		case "cd":
-			run(command, a.CD)
-		case "unlock":
-			run(command, a.Unlock)
 		case "lock":
 			run(command, a.Lock)
+		case "push":
+			run(command, a.Push)
+		case "pull":
+			run(command, a.Pull)
 		case "backup":
 			run(command, a.Backup)
 		case "device":
@@ -84,49 +82,39 @@ func run(command string, fn func() error) {
 
 func fail(command string, err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
-	if command != "doctor" && command != "decode" && command != "setup" && command != "device" && command != "lock" {
+	if command != "doctor" && command != "decode" && command != "setup" && command != "device" && command != "lock" && command != "remove" {
 		fmt.Fprintln(os.Stderr, "Run 'edrive doctor' for diagnostics.")
 	}
 	os.Exit(1)
 }
 
 func printHelp() {
-	fmt.Printf(`edrive %s - local-first encrypted workspace
-
-Usage:
-  edrive setup
-  edrive doctor
-  edrive open
-  edrive cd
-  edrive unlock
-  edrive lock
-  edrive backup
-  edrive decode <encrypted-file> <recovery-key>
-  edrive device add <label>
-  edrive device list
-  edrive device remove <label>
-
-Other:
-  edrive help
-  edrive version
-
-Each fresh setup asks for the workspace location again.
-Google Drive and Cryptomator remain external; edrive discovers and uses only the resources explicitly selected for it.
-
-Backup:
-  edrive backup
-
-Backup creates one encrypted backup file in a folder you choose.
-The destination is remembered and opened in Finder after backup.
-
-Recovery:
-  The recovery key is created once on the first backup and kept in the
-  macOS Keychain. It is not printed by edrive.
-
-Decode:
-  edrive decode backup.tar.zst.age recovery-key.txt
-
-Decode decrypts, decompresses, and extracts the backup into a new sibling
-folder. It requires both age and zstd, but does not require edrive setup.
-`, version)
+	fmt.Printf("edrive %s - local encrypted workspace with explicit cloud sync\n\n", version)
+	fmt.Println("Usage:")
+	fmt.Println("  edrive setup")
+	fmt.Println("  edrive doctor")
+	fmt.Println("  edrive open")
+	fmt.Println("  edrive lock")
+	fmt.Println("  edrive push")
+	fmt.Println("  edrive pull")
+	fmt.Println("  edrive backup")
+	fmt.Println("  edrive decode <encrypted-file> <recovery-key>")
+	fmt.Println("  edrive remove")
+	fmt.Println("  edrive device add <label>")
+	fmt.Println("  edrive device list")
+	fmt.Println("  edrive device remove <label>")
+	fmt.Println()
+	fmt.Println("Daily flow:")
+	fmt.Println("  edrive open")
+	fmt.Println("  # work in ~/.edrive/workspace")
+	fmt.Println("  edrive lock")
+	fmt.Println("  edrive push")
+	fmt.Println()
+	fmt.Println("Cloud:")
+	fmt.Printf("  rclone remote: %s\n", config.RcloneRemote)
+	fmt.Printf("  remote vault:  %s:%s\n", config.RcloneRemote, config.RemoteVault)
+	fmt.Println()
+	fmt.Println("Recovery:")
+	fmt.Println("  edrive backup")
+	fmt.Println("  edrive decode <backup.tar.zst.age> <recovery-key.txt>")
 }

@@ -8,20 +8,22 @@ import (
 	"strings"
 )
 
-const CurrentVersion = 2
+const CurrentVersion = 3
+
+const (
+	RcloneRemote = "edrive-cloud"
+	RemoteVault  = "edrive"
+)
 
 type Config struct {
-	ConfigPath      string `json:"-"`
-	ConfigFound     bool   `json:"-"`
-	Version         int    `json:"version"`
-	DataRoot        string `json:"data_root"`
-	StorageProvider string `json:"storage_provider"`
-	StorageName     string `json:"storage_name"`
-	StorageRoot     string `json:"storage_root,omitempty"`
-	LastBackupDir   string `json:"last_backup_dir,omitempty"`
-	AgePath         string `json:"age_path,omitempty"`
-	ZstdPath        string `json:"zstd_path,omitempty"`
-	CryptomatorCLI  string `json:"cryptomator_cli,omitempty"`
+	ConfigPath     string `json:"-"`
+	ConfigFound    bool   `json:"-"`
+	Version        int    `json:"version"`
+	RcloneRemote   string `json:"rclone_remote"`
+	RclonePath     string `json:"rclone_path"`
+	AgePath        string `json:"age_path,omitempty"`
+	ZstdPath       string `json:"zstd_path,omitempty"`
+	CryptomatorCLI string `json:"cryptomator_cli,omitempty"`
 }
 
 func Home() string {
@@ -33,9 +35,16 @@ func DefaultPath() string {
 	return filepath.Join(Home(), "config.json")
 }
 
-func DefaultDataRoot() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "edrive")
+func WorkspacePath() string {
+	return filepath.Join(Home(), "workspace")
+}
+
+func LocalVaultPath() string {
+	return filepath.Join(Home(), "vault")
+}
+
+func BackupDir() string {
+	return filepath.Join(Home(), "backups")
 }
 
 func DevicesPath() string {
@@ -54,29 +63,15 @@ func TempDir() string {
 	return filepath.Join(Home(), "tmp")
 }
 
-func Expand(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "~" {
-		home, _ := os.UserHomeDir()
-		return home
-	}
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
-	}
-	return path
-}
-
 func Defaults(path string) Config {
 	if path == "" {
 		path = DefaultPath()
 	}
 	return Config{
-		ConfigPath:      Expand(path),
-		Version:         CurrentVersion,
-		DataRoot:        DefaultDataRoot(),
-		StorageProvider: "google-drive",
-		StorageName:     "edrive",
+		ConfigPath:   filepath.Clean(path),
+		Version:      CurrentVersion,
+		RcloneRemote: RcloneRemote,
+		RclonePath:   RemoteVault,
 	}
 }
 
@@ -92,32 +87,30 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("open config: %w", err)
 	}
 	defer f.Close()
-	cfg.ConfigFound = true
 
-	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
+	cfg.ConfigFound = true
+	var stored Config
+	if err := json.NewDecoder(f).Decode(&stored); err != nil {
 		return cfg, fmt.Errorf("decode config: %w", err)
 	}
+
+	cfg.Version = stored.Version
+	if cfg.Version != CurrentVersion {
+		return cfg, fmt.Errorf("edrive config version %d must be rebuilt with 'edrive setup'", cfg.Version)
+	}
+	cfg.RcloneRemote = stored.RcloneRemote
+	cfg.RclonePath = stored.RclonePath
+	cfg.AgePath = Expand(stored.AgePath)
+	cfg.ZstdPath = Expand(stored.ZstdPath)
+	cfg.CryptomatorCLI = Expand(stored.CryptomatorCLI)
+
+	if strings.TrimSpace(cfg.RcloneRemote) == "" {
+		cfg.RcloneRemote = RcloneRemote
+	}
+	if strings.TrimSpace(cfg.RclonePath) == "" {
+		cfg.RclonePath = RemoteVault
+	}
 	cfg.ConfigPath = Defaults(cfg.ConfigPath).ConfigPath
-	cfg.ConfigFound = true
-
-	if cfg.Version == 0 {
-		cfg.Version = CurrentVersion
-	}
-	if cfg.Version > CurrentVersion {
-		return Config{}, fmt.Errorf("unsupported edrive config version: %d", cfg.Version)
-	}
-	if cfg.Version < CurrentVersion {
-		cfg.Version = CurrentVersion
-	}
-	cfg.DataRoot = ExpandOrDefault(cfg.DataRoot, DefaultDataRoot())
-	cfg.StorageProvider = ExpandOrDefault(cfg.StorageProvider, "google-drive")
-	cfg.StorageName = ExpandOrDefault(cfg.StorageName, "edrive")
-	cfg.StorageRoot = Expand(cfg.StorageRoot)
-	cfg.LastBackupDir = Expand(cfg.LastBackupDir)
-	cfg.AgePath = Expand(cfg.AgePath)
-	cfg.ZstdPath = Expand(cfg.ZstdPath)
-	cfg.CryptomatorCLI = Expand(cfg.CryptomatorCLI)
-
 	return cfg, nil
 }
 
@@ -159,9 +152,15 @@ func (c Config) Save() error {
 	return os.Chmod(c.ConfigPath, 0600)
 }
 
-func ExpandOrDefault(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
+func Expand(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "~" {
+		home, _ := os.UserHomeDir()
+		return home
 	}
-	return Expand(value)
+	if strings.HasPrefix(path, "~/") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, path[2:])
+	}
+	return path
 }

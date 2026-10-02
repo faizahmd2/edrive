@@ -34,6 +34,20 @@ func New(cfg Config) *Client {
 	return &Client{cfg: cfg}
 }
 
+func CredentialAvailable(vaultID string) bool {
+	if strings.TrimSpace(vaultID) == "" {
+		return false
+	}
+	out, err := exec.Command(
+		"/usr/bin/security",
+		"find-generic-password",
+		"-s", KeychainService,
+		"-a", vaultID,
+		"-w",
+	).Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
 func (c *Client) Unlock() error {
 	if mounted(c.cfg.MountPoint) {
 		return fmt.Errorf("vault already mounted at %s", c.cfg.MountPoint)
