@@ -37,8 +37,12 @@ func Run() error {
 		return fmt.Errorf("create edrive temporary state: %w", err)
 	}
 
-	if err := chooseWorkspace(&cfg); err != nil {
+	completed, err := chooseWorkspace(&cfg)
+	if err != nil {
 		return err
+	}
+	if !completed {
+		return nil
 	}
 	if err := ensureDependencies(&cfg); err != nil {
 		return err
@@ -48,11 +52,17 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+	if root == "" {
+		return nil
+	}
 	cfg.StorageRoot = root
 
 	vaultPath, err := ensureVault(root)
 	if err != nil {
 		return err
+	}
+	if vaultPath == "" {
+		return nil
 	}
 	relative, err := filepath.Rel(root, vaultPath)
 	if err != nil || relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
@@ -123,7 +133,7 @@ func confirmFreshSetup() (bool, error) {
 	return true, nil
 }
 
-func chooseWorkspace(cfg *config.Config) error {
+func chooseWorkspace(cfg *config.Config) (bool, error) {
 	defaultDir := config.DefaultDataRoot()
 	_ = os.MkdirAll(defaultDir, 0700)
 
@@ -137,11 +147,11 @@ func chooseWorkspace(cfg *config.Config) error {
 		}
 		if !selected {
 			fmt.Println("Setup cancelled.")
-			return nil
+			return false, nil
 		}
 		if mounted(path) {
 			cfg.DataRoot = filepath.Clean(path)
-			return nil
+			return true, nil
 		}
 		entries, err := os.ReadDir(path)
 		if err != nil {
@@ -153,7 +163,7 @@ func chooseWorkspace(cfg *config.Config) error {
 			continue
 		}
 		cfg.DataRoot = filepath.Clean(path)
-		return nil
+		return true, nil
 	}
 }
 
@@ -225,7 +235,7 @@ func ensureGoogleDriveRoot() (string, error) {
 		}
 		if !selected {
 			fmt.Println("Setup cancelled.")
-			return "", errCancelled
+			return "", nil
 		}
 		path = provider.NormalizeRoot(path)
 		if !isDir(path) {
@@ -263,7 +273,7 @@ func ensureGoogleDriveRoot() (string, error) {
 		}
 		if !selected {
 			fmt.Println("Setup cancelled.")
-			return "", errCancelled
+			return "", nil
 		}
 		path = provider.NormalizeRoot(path)
 		if !isDir(path) {
@@ -281,7 +291,7 @@ func ensureGoogleDriveRoot() (string, error) {
 	}
 	if !selected {
 		fmt.Println("Setup cancelled.")
-		return "", errCancelled
+		return "", nil
 	}
 	path = provider.NormalizeRoot(path)
 	if !isDir(path) {
@@ -364,7 +374,7 @@ func chooseVaultParent(root string) (string, error) {
 		}
 		if !selected {
 			fmt.Println("Setup cancelled.")
-			return "", errCancelled
+			return "", nil
 		}
 		parent = filepath.Clean(parent)
 		rel, err := filepath.Rel(root, parent)
@@ -474,7 +484,6 @@ func ensureDefaultDevice(ageKeygen string) error {
 	return err
 }
 
-var errCancelled = fmt.Errorf("setup cancelled")
 func ensureAge() (string, error) {
 	if path, err := exec.LookPath("age"); err == nil && toolVersionMatches(path, toolchain.AgeVersion) {
 		return path, nil
