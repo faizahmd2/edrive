@@ -1,7 +1,9 @@
 package cryptomator
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,14 +13,17 @@ import (
 	"time"
 )
 
+const (
+	KeychainService = "Cryptomator"
+	Mounter         = "org.cryptomator.frontend.fuse.mount.FuseTMountProvider"
+)
+
 type Config struct {
-	VaultPath       string
-	VaultID         string
-	MountPoint      string
-	CLIPath         string
-	Mounter         string
-	KeychainService string
-	RuntimeDir      string
+	VaultPath  string
+	VaultID    string
+	MountPoint string
+	CLIPath    string
+	RuntimeDir string
 }
 
 type Client struct {
@@ -33,223 +38,231 @@ func (c *Client) Unlock() error {
 	if mounted(c.cfg.MountPoint) {
 		return fmt.Errorf("vault already mounted at %s", c.cfg.MountPoint)
 	}
-
-	if c.cfg.VaultPath == "" {
-		return fmt.Errorf("Cryptomator vault path is not configured")
-	}
-	if c.cfg.VaultID == "" {
-		return fmt.Errorf("Cryptomator vault ID is not configured")
-	}
-	if c.cfg.CLIPath == "" {
-		return fmt.Errorf("Cryptomator CLI path is not configured")
-	}
-	if c.cfg.Mounter == "" {
-		return fmt.Errorf("Cryptomator mounter is not configured")
-	}
-	if c.cfg.MountPoint == "" {
-		return fmt.Errorf("Cryptomator mount point is not configured")
-	}
-	if c.cfg.KeychainService == "" {
-		return fmt.Errorf("Cryptomator Keychain service is not configured")
+	if c.cfg.VaultPath == "" || c.cfg.MountPoint == "" || c.cfg.CLIPath == "" || c.cfg.RuntimeDir == "" {
+		return fmt.Errorf("Cryptomator is not configured")
 	}
 
-	if info, err := os.Stat(c.cfg.VaultPath); err != nil || !info.IsDir() {
-		return fmt.Errorf("Cryptomator vault path is unavailable: %s", c.cfg.VaultPath)
+	info, err := os.Stat(c.cfg.VaultPath)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("encrypted workspace is unavailable")
+	}
+	if !isExecutableFile(c.cfg.CLIPath) {
+		return fmt.Errorf("Cryptomator CLI is unavailable")
 	}
 
-	if _, err := os.Stat(c.cfg.CLIPath); err != nil {
-		return fmt.Errorf("Cryptomator CLI unavailable: %w", err)
+	vaultID := c.cfg.VaultID
+	if vaultID == "" {
+		vaultID, err = DiscoverVaultID(c.cfg.VaultPath)
+		if err != nil {
+			return fmt.Errorf("the Cryptomator vault is not registered on this Mac")
+		}
+	}
+	credential, err := cryptomatorCredential(vaultID)
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(c.cfg.RuntimeDir, 0700); err != nil {
 		return fmt.Errorf("create runtime directory: %w", err)
 	}
 
-	logPath := filepath.Join(c.cfg.RuntimeDir, "cryptomator-cli.log")
-
-	logFile, err := os.OpenFile(
-		logPath,
-		os.O_CREATE|os.O_TRUNC|os.O_WRONLY,
-		0600,
-	)
-	if err != nil {
-		return fmt.Errorf("create Cryptomator log: %w", err)
-	}
-	defer logFile.Close()
-
 	cmd := exec.Command(
 		c.cfg.CLIPath,
 		"unlock",
 		"--password:stdin",
-		"--mounter="+c.cfg.Mounter,
+		"--mounter="+Mounter,
 		"--mountPoint="+c.cfg.MountPoint,
 		c.cfg.VaultPath,
 	)
-
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	cryptStdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("create Cryptomator stdin: %w", err)
 	}
-
 	if err := cmd.Start(); err != nil {
 		_ = cryptStdin.Close()
-		return fmt.Errorf("start Cryptomator CLI: %w", err)
+		return fmt.Errorf("start Cryptomator CLI")
 	}
 
-	// Reuse Cryptomator's existing macOS Keychain entry.
-	security := exec.Command(
-		"/usr/bin/security",
-		"find-generic-password",
-		"-s", c.cfg.KeychainService,
-		"-a", c.cfg.VaultID,
-		"-w",
-	)
-
-	security.Stdout = cryptStdin
-	security.Stderr = logFile
-
-	if err := security.Run(); err != nil {
-		_ = cryptStdin.Close()
-		_ = syscall.Kill(cmd.Process.Pid, syscall.SIGTERM)
-		return fmt.Errorf(
-			"read Cryptomator password from macOS Keychain: %w; see %s",
-			err,
-			logPath,
-		)
-	}
-
-	if err := cryptStdin.Close(); err != nil {
-		_ = syscall.Kill(cmd.Process.Pid, syscall.SIGTERM)
-		return fmt.Errorf("close Cryptomator stdin: %w", err)
-	}
-
-	pid := cmd.Process.Pid
-
+	waitDone := make(chan error, 1)
 	go func() {
-		_ = cmd.Wait()
+		waitDone <- cmd.Wait()
 	}()
 
-	deadline := time.Now().Add(15 * time.Second)
+	if _, err := io.WriteString(cryptStdin, credential+"\n"); err != nil {
+		credential = ""
+		_ = cryptStdin.Close()
+		terminate(cmd.Process.Pid)
+		<-waitDone
+		return fmt.Errorf("send the Cryptomator password to its CLI: %w", err)
+	}
+	credential = ""
 
+	if err := cryptStdin.Close(); err != nil {
+		terminate(cmd.Process.Pid)
+		<-waitDone
+		return fmt.Errorf("close Cryptomator stdin")
+	}
+
+	pidPath := filepath.Join(c.cfg.RuntimeDir, "cryptomator.pid")
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if mounted(c.cfg.MountPoint) {
-			pidPath := filepath.Join(c.cfg.RuntimeDir, "cryptomator.pid")
-
-			if err := os.WriteFile(
-				pidPath,
-				[]byte(strconv.Itoa(pid)+"\n"),
-				0600,
-			); err != nil {
-				_ = syscall.Kill(pid, syscall.SIGTERM)
-				return fmt.Errorf("write Cryptomator PID: %w", err)
+			if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0600); err != nil {
+				terminate(cmd.Process.Pid)
+				<-waitDone
+				return fmt.Errorf("write Cryptomator state: %w", err)
 			}
-
 			return nil
 		}
 
-		if !processAlive(pid) {
-			return fmt.Errorf(
-				"Cryptomator CLI exited before mounting; see %s",
-				logPath,
-			)
+		select {
+		case <-waitDone:
+			return fmt.Errorf("Cryptomator CLI exited before mounting; check that the vault is available locally and its password is stored in Keychain")
+		default:
 		}
-
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	_ = syscall.Kill(pid, syscall.SIGTERM)
-
-	return fmt.Errorf(
-		"timed out waiting for Cryptomator mount; see %s",
-		logPath,
-	)
+	terminate(cmd.Process.Pid)
+	<-waitDone
+	return fmt.Errorf("timed out waiting for Cryptomator mount")
 }
 
 func (c *Client) Lock() error {
 	pidPath := filepath.Join(c.cfg.RuntimeDir, "cryptomator.pid")
-
 	b, err := os.ReadFile(pidPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf(
-				"vault is not owned by edrive; lock it from Cryptomator",
-			)
+			return fmt.Errorf("vault is not owned by edrive")
 		}
 		return err
 	}
 
-	pidText := strings.TrimSpace(string(b))
-
-	pid, err := strconv.Atoi(pidText)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil || pid <= 0 {
-		return fmt.Errorf("invalid Cryptomator PID: %q", pidText)
+		return fmt.Errorf("invalid Cryptomator process state")
 	}
-
 	if !processMatches(pid, c.cfg.CLIPath) {
-		return fmt.Errorf(
-			"PID %d is not the expected Cryptomator CLI process",
-			pid,
-		)
+		return fmt.Errorf("edrive process state is stale")
 	}
 
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil &&
-		err != syscall.ESRCH {
-		return fmt.Errorf("stop Cryptomator CLI: %w", err)
-	}
+	terminate(pid)
 
 	deadline := time.Now().Add(15 * time.Second)
-
 	for time.Now().Before(deadline) {
-		if !mounted(c.cfg.MountPoint) {
+		mountedNow := mounted(c.cfg.MountPoint)
+		aliveNow := processExists(pid)
+		if !mountedNow && !aliveNow {
 			_ = os.Remove(pidPath)
 			return nil
 		}
-
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timed out waiting for Cryptomator to unmount")
+	return fmt.Errorf("timed out waiting for Cryptomator to close")
+}
+
+func cryptomatorCredential(vaultID string) (string, error) {
+	out, err := exec.Command(
+		"/usr/bin/security",
+		"find-generic-password",
+		"-s", KeychainService,
+		"-a", vaultID,
+		"-w",
+	).Output()
+	if err != nil {
+		return "", fmt.Errorf("Cryptomator's password is not available from macOS Keychain for this vault; unlock it once in Cryptomator so its password is stored, then retry")
+	}
+	credential := strings.TrimSpace(string(out))
+	if credential == "" {
+		return "", fmt.Errorf("Cryptomator's Keychain password for this vault is empty; open Cryptomator and set the vault password again")
+	}
+	return credential, nil
+}
+
+func DiscoverVaultID(vaultPath string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	settingsPath := filepath.Join(home, "Library", "Application Support", "Cryptomator", "settings.json")
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return "", err
+	}
+
+	var settings struct {
+		Directories []struct {
+			ID   string `json:"id"`
+			Path string `json:"path"`
+		} `json:"directories"`
+	}
+	if err := json.Unmarshal(b, &settings); err != nil {
+		return "", err
+	}
+
+	target := canonicalPath(vaultPath)
+	for _, directory := range settings.Directories {
+		if directory.ID == "" || directory.Path == "" {
+			continue
+		}
+		path := directory.Path
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(home, path)
+		}
+		if canonicalPath(path) == target {
+			return directory.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("vault is not registered in Cryptomator")
 }
 
 func mounted(mountPoint string) bool {
+	if mountPoint == "" {
+		return false
+	}
 	out, err := exec.Command("mount").Output()
 	if err != nil {
 		return false
 	}
-
-	marker := " on " + filepath.Clean(mountPoint) + " ("
-
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, marker) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func processAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+	return strings.Contains(string(out), " on "+filepath.Clean(mountPoint)+" (")
 }
 
 func processMatches(pid int, expectedCLI string) bool {
-	out, err := exec.Command(
-		"ps",
-		"-p",
-		strconv.Itoa(pid),
-		"-o",
-		"command=",
-	).Output()
+	if expectedCLI == "" {
+		return false
+	}
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
 	if err != nil {
 		return false
 	}
+	return strings.Contains(strings.TrimSpace(string(out)), expectedCLI)
+}
 
-	command := strings.TrimSpace(string(out))
-	return strings.Contains(command, expectedCLI)
+func processExists(pid int) bool {
+	return exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "pid=").Run() == nil
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
+}
+
+func canonicalPath(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
+}
+
+func terminate(pid int) {
+	_ = syscall.Kill(-pid, syscall.SIGTERM)
+	_ = syscall.Kill(pid, syscall.SIGTERM)
 }

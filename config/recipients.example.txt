@@ -1,6 +1,0 @@
-# Public age recipients.
-# Replace these with your own device/recovery recipients.
-
-age1examplemacrecipient
-age1examplephonerecipient
-age1examplerecoveryrecipient

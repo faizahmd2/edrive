@@ -23,6 +23,7 @@ build/
 coverage.out
 coverage.html
 *.test
+edrive
 
 # ============================================================
 # edrive local state
