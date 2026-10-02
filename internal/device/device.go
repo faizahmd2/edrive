@@ -185,26 +185,42 @@ func Remove(label string) error {
 	}
 
 	found := false
-	devices := reg.Devices[:0]
+	keep := make([]Record, 0, len(reg.Devices))
+	var identity string
 	for _, d := range reg.Devices {
 		if d.Label == label {
 			found = true
 			continue
 		}
-		devices = append(devices, d)
+		keep = append(keep, d)
 	}
 	if !found {
 		return fmt.Errorf("device %q does not exist", label)
 	}
-	if len(devices) == 0 {
+	if len(keep) == 0 {
 		return fmt.Errorf("cannot remove the last device identity")
 	}
-	if err := keychain.DeleteIdentity(label); err != nil {
-		return err
+
+	if keychain.IdentityExists(label) {
+		identity, err = keychain.GetIdentity(label)
+		if err != nil {
+			return fmt.Errorf("edrive needs access to device %q before removing it", label)
+		}
+		if err := keychain.DeleteIdentity(label); err != nil {
+			return err
+		}
 	}
 
-	reg.Devices = devices
-	return reg.Save()
+	original := reg.Devices
+	reg.Devices = keep
+	if err := reg.Save(); err != nil {
+		if identity != "" {
+			_ = keychain.SetIdentity(label, identity)
+		}
+		reg.Devices = original
+		return err
+	}
+	return nil
 }
 
 func List() ([]Record, error) {
