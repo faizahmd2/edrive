@@ -27,7 +27,7 @@ func (a App) Doctor() error {
 	fmt.Println()
 
 	ok := true
-	ok = a.check("config", a.Config.ConfigFound, a.Config.ConfigPath) && ok
+	ok = a.check("config", a.Config.ConfigFound && fileMode0600(a.Config.ConfigPath), a.Config.ConfigPath) && ok
 	ok = a.check("workspace", isDir(a.Config.DataRoot), a.Config.DataRoot) && ok
 
 	root, rootErr := (provider.GoogleDrive{PreferredRoot: a.Config.StorageRoot, StorageName: a.Config.StorageName}).Root()
@@ -51,10 +51,18 @@ func (a App) Doctor() error {
 		ok = a.check("devices", false, "no device identities") && ok
 	} else {
 		labels := make([]string, 0, len(devices))
+		devicesOK := true
 		for _, d := range devices {
 			labels = append(labels, d.Label)
+			if !keychain.IdentityExists(d.Label) {
+				devicesOK = false
+			}
 		}
-		ok = a.check("devices", true, strings.Join(labels, ", ")) && ok
+		detail := strings.Join(labels, ", ")
+		if !devicesOK {
+			detail += " (Keychain item missing)"
+		}
+		ok = a.check("devices", devicesOK, detail) && ok
 	}
 
 	if keychain.RecoveryExists() {
