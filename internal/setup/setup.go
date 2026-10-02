@@ -254,7 +254,8 @@ func ensureVault(vaultPath string) error {
 }
 
 func ensureDefaultDevice(ageKeygen string) error {
-	if devices, err := device.List(); err != nil {
+	devices, err := device.List()
+	if err != nil {
 		return err
 	}
 	for _, d := range devices {
