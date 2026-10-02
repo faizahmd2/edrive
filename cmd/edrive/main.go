@@ -84,7 +84,7 @@ func run(command string, fn func() error) {
 
 func fail(command string, err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
-	if command != "doctor" && command != "decode" && command != "setup" {
+	if command != "doctor" && command != "decode" && command != "setup" && command != "device" && command != "lock" {
 		fmt.Fprintln(os.Stderr, "Run 'edrive doctor' for diagnostics.")
 	}
 	os.Exit(1)
