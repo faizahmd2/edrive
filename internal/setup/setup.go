@@ -8,15 +8,15 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/faiz/edrive/internal/ageutil"
-	"github.com/faiz/edrive/internal/config"
-	"github.com/faiz/edrive/internal/cryptomator"
-	"github.com/faiz/edrive/internal/device"
-	"github.com/faiz/edrive/internal/keychain"
-	"github.com/faiz/edrive/internal/provider"
-	"github.com/faiz/edrive/internal/toolchain"
-	"github.com/faiz/edrive/internal/ui"
-	"github.com/faiz/edrive/internal/vault"
+	"github.com/faizahmd2/edrive/internal/ageutil"
+	"github.com/faizahmd2/edrive/internal/config"
+	"github.com/faizahmd2/edrive/internal/cryptomator"
+	"github.com/faizahmd2/edrive/internal/device"
+	"github.com/faizahmd2/edrive/internal/keychain"
+	"github.com/faizahmd2/edrive/internal/provider"
+	"github.com/faizahmd2/edrive/internal/toolchain"
+	"github.com/faizahmd2/edrive/internal/ui"
+	"github.com/faizahmd2/edrive/internal/vault"
 )
 
 func Run() error {

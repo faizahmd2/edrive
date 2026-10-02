@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/faiz/edrive/internal/ageutil"
-	"github.com/faiz/edrive/internal/backup"
-	"github.com/faiz/edrive/internal/config"
-	"github.com/faiz/edrive/internal/device"
-	"github.com/faiz/edrive/internal/keychain"
-	"github.com/faiz/edrive/internal/ui"
+	"github.com/faizahmd2/edrive/internal/ageutil"
+	"github.com/faizahmd2/edrive/internal/backup"
+	"github.com/faizahmd2/edrive/internal/config"
+	"github.com/faizahmd2/edrive/internal/device"
+	"github.com/faizahmd2/edrive/internal/keychain"
+	"github.com/faizahmd2/edrive/internal/ui"
 )
 
 const recoveryFileName = "edrive-recovery-key.txt"

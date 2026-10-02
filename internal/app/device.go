@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/faiz/edrive/internal/ageutil"
-	"github.com/faiz/edrive/internal/device"
-	"github.com/faiz/edrive/internal/ui"
+	"github.com/faizahmd2/edrive/internal/ageutil"
+	"github.com/faizahmd2/edrive/internal/device"
+	"github.com/faizahmd2/edrive/internal/ui"
 )
 
 func (a App) Device(args []string) error {

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/faiz/edrive/internal/ageutil"
-	"github.com/faiz/edrive/internal/config"
-	"github.com/faiz/edrive/internal/keychain"
+	"github.com/faizahmd2/edrive/internal/ageutil"
+	"github.com/faizahmd2/edrive/internal/config"
+	"github.com/faizahmd2/edrive/internal/keychain"
 )
 
 var labelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)

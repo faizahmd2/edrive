@@ -1,3 +1,3 @@
-module github.com/faiz/edrive
+module github.com/faizahmd2/edrive
 
 go 1.26
