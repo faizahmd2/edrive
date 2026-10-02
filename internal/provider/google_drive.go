@@ -117,4 +117,3 @@ func unique(paths []string) []string {
 	}
 	return out
 }
-
