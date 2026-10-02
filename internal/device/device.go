@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/faiz/edrive/internal/config"
 	"github.com/faiz/edrive/internal/keychain"
+	"github.com/faiz/edrive/internal/ageutil"
 )
 
 var labelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}package device
@@ -123,11 +123,11 @@ func AddGenerated(label, ageKeygen string) (Record, error) {
 		}
 	}
 
-	identity, err := generateIdentity(ageKeygen)
+	identity, err := ageutil.GenerateIdentity(ageKeygen, config.TempDir())
 	if err != nil {
 		return Record{}, err
 	}
-	recipient, err := recipientFromIdentity(identity, ageKeygen)
+	recipient, err := ageutil.Recipient(identity, ageKeygen, config.TempDir())
 	if err != nil {
 		return Record{}, err
 	}
@@ -215,63 +215,4 @@ func Recipients() ([]string, error) {
 		recipients = append(recipients, d.Recipient)
 	}
 	return recipients, nil
-}
-
-func generateIdentity(ageKeygen string) (string, error) {
-	path, err := os.CreateTemp(config.TempDir(), ".identity-*")
-	if err != nil {
-		return "", err
-	}
-	name := path.Name()
-	if err := path.Chmod(0600); err != nil {
-		_ = path.Close()
-		_ = os.Remove(name)
-		return "", err
-	}
-	if err := path.Close(); err != nil {
-		_ = os.Remove(name)
-		return "", err
-	}
-	defer os.Remove(name)
-
-	cmd := exec.Command(ageKeygen, "-pq", "-o", name)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("generate device identity: %w", err)
-	}
-	b, err := os.ReadFile(name)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(b)), nil
-}
-
-func recipientFromIdentity(identity, ageKeygen string) (string, error) {
-	path, err := os.CreateTemp(config.TempDir(), ".recipient-identity-*")
-	if err != nil {
-		return "", err
-	}
-	name := path.Name()
-	defer os.Remove(name)
-
-	if err := path.Chmod(0600); err != nil {
-		_ = path.Close()
-		return "", err
-	}
-	if _, err := path.WriteString(identity + "\n"); err != nil {
-		_ = path.Close()
-		return "", err
-	}
-	if err := path.Close(); err != nil {
-		return "", err
-	}
-
-	out, err := exec.Command(ageKeygen, "-y", name).Output()
-	if err != nil {
-		return "", fmt.Errorf("derive device recipient: %w", err)
-	}
-	recipient := strings.TrimSpace(string(out))
-	if !strings.HasPrefix(recipient, "age1") {
-		return "", fmt.Errorf("invalid age recipient")
-	}
-	return recipient, nil
 }
