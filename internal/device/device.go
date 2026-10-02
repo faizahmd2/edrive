@@ -14,7 +14,23 @@ import (
 	"github.com/faiz/edrive/internal/keychain"
 )
 
-var labelPattern = regexp.MustCompile(^[a-z0-9][a-z0-9._-]{0,63}$)
+var labelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}package device
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/faiz/edrive/internal/config"
+	"github.com/faiz/edrive/internal/keychain"
+)
+
+var labelPattern = )
 
 type Record struct {
 	Label     string    `json:"label"`
