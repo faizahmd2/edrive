@@ -49,7 +49,13 @@ func Run() error {
 	if err := ensureWorkspace(cfg.DataRoot, cfg.ConfigFound); err != nil {
 		return err
 	}
+	if err := cfg.Save(); err != nil {
+		return err
+	}
 	if err := ensureDependencies(&cfg); err != nil {
+		return err
+	}
+	if err := cfg.Save(); err != nil {
 		return err
 	}
 
@@ -66,12 +72,18 @@ func Run() error {
 		}
 	}
 	cfg.StorageRoot = root
+	if err := cfg.Save(); err != nil {
+		return err
+	}
 
 	vaultPath, err := drive.VaultPath(cfg.StorageName)
 	if err != nil {
 		return err
 	}
 	if err := ensureVault(vaultPath); err != nil {
+		return err
+	}
+	if err := cfg.Save(); err != nil {
 		return err
 	}
 
