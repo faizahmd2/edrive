@@ -34,7 +34,7 @@ func main() {
 		if err != nil {
 			fail(command, err)
 		}
-		fmt.Println("Decoded:", output)
+		fmt.Println("Recovered:", output)
 	case "shell-init":
 		if len(os.Args) != 3 || os.Args[2] != "zsh" {
 			fail(command, fmt.Errorf("usage: edrive shell-init zsh"))
@@ -126,6 +126,7 @@ Recovery:
 Decode:
   edrive decode backup.tar.zst.age recovery-key.txt
 
-Decode requires only the age command. It does not require edrive setup.
+Decode decrypts, decompresses, and extracts the backup into a new sibling
+folder. It requires both age and zstd, but does not require edrive setup.
 `, version)
 }
