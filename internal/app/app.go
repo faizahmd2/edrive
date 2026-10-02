@@ -75,13 +75,24 @@ func (a App) Doctor() error {
 	}
 	var checks []check
 
-	checks = append(checks, check{"Config", a.Config.ConfigFound, a.Config.ConfigPath})
+	cfgModeOK := false
+	if info, err := os.Stat(a.Config.ConfigPath); err == nil {
+		cfgModeOK = info.Mode().Perm()&0077 == 0
+	}
+	configDetail := a.Config.ConfigPath
+	if !a.Config.ConfigFound {
+		configDetail = "not configured"
+	} else if !cfgModeOK {
+		configDetail = "permissions should be 0600"
+	}
+	checks = append(checks, check{"Config", a.Config.ConfigFound && cfgModeOK, configDetail})
 	if a.Config.DataRoot != "" {
 		checks = append(checks, check{"Data root", isDir(a.Config.DataRoot), a.Config.DataRoot})
 	}
 	if a.Config.GoogleDriveRoot != "" {
 		checks = append(checks, check{"Google Drive root", isDir(a.Config.GoogleDriveRoot), a.Config.GoogleDriveRoot})
 	}
+	checks = append(checks, check{"Drive configuration", a.Config.GoogleDriveReady, "mirrored local folder recorded"})
 	if a.Config.Mount != "" {
 		checks = append(checks, check{"Mount path", isDir(a.Config.Mount), a.Config.Mount})
 	}
