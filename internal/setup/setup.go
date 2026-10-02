@@ -413,7 +413,6 @@ func ensureVault(root string) (string, error) {
 		if err := vault.MarkManaged(candidate); err != nil {
 			return "", err
 		}
-		return candidate, nil
 	}
 }
 
@@ -606,11 +605,6 @@ func toolVersionMatches(path, version string) bool {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
-}
-
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
 }
 
 func isExecutable(path string) bool {
