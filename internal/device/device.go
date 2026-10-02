@@ -108,6 +108,42 @@ func (r Registry) Save() error {
 	return os.Rename(path, config.DevicesPath())
 }
 
+func Import(label, identity, ageKeygen string) (Record, error) {
+	if !labelPattern.MatchString(label) {
+		return Record{}, fmt.Errorf("invalid device label %q", label)
+	}
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return Record{}, fmt.Errorf("device identity is empty")
+	}
+
+	reg, err := Load()
+	if err != nil {
+		return Record{}, err
+	}
+	for _, d := range reg.Devices {
+		if d.Label == label {
+			return Record{}, fmt.Errorf("device %q already exists", label)
+		}
+	}
+
+	recipient, err := ageutil.Recipient(identity, ageKeygen, config.TempDir())
+	if err != nil {
+		return Record{}, err
+	}
+	if err := keychain.SetIdentity(label, identity); err != nil {
+		return Record{}, err
+	}
+
+	rec := Record{Label: label, Recipient: recipient, CreatedAt: time.Now().UTC()}
+	reg.Devices = append(reg.Devices, rec)
+	if err := reg.Save(); err != nil {
+		_ = keychain.DeleteIdentity(label)
+		return Record{}, err
+	}
+	return rec, nil
+}
+
 func AddGenerated(label, ageKeygen string) (Record, error) {
 	if !labelPattern.MatchString(label) {
 		return Record{}, fmt.Errorf("invalid device label %q", label)
