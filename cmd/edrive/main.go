@@ -19,6 +19,8 @@ func usage() {
 
 	Usage:
 	edrive setup
+	edrive remove
+	edrive purge
 	edrive doctor
 	edrive status
 	edrive unlock
@@ -56,22 +58,29 @@ func main() {
 		return
 	}
 
-	if command == "setup" {
+	if command == "setup" || command == "remove" || command == "purge" {
 		if len(os.Args) != 2 {
-			fmt.Fprintln(os.Stderr, "error: setup does not accept arguments")
+			fmt.Fprintln(os.Stderr, "error:", command, "does not accept arguments")
 			os.Exit(2)
 		}
-		if err := setup.Run(); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+		var err error
+		switch command {
+		case "setup":
+			err = setup.Run()
+		case "remove":
+			err = setup.Remove()
+		case "purge":
+			err = setup.Purge()
+		}
+		if err != nil {
+			fail(command, err)
 		}
 		return
 	}
 
 	if command == "identity" {
 		if err := identityCommand(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			fail(command, err)
 		}
 		return
 	}
@@ -125,9 +134,16 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		fail(command, err)
 	}
+}
+
+func fail(command string, err error) {
+	fmt.Fprintln(os.Stderr, "error:", err)
+	if command != "doctor" {
+		fmt.Fprintln(os.Stderr, "Run 'edrive doctor' for diagnostics.")
+	}
+	os.Exit(1)
 }
 
 func identityCommand(args []string) error {
