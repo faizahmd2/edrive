@@ -202,28 +202,32 @@ func binaryDetail(name string) string {
 }
 
 func caskOrAppAvailable(cask string, appPaths []string) bool {
-	if _, err := exec.LookPath("brew"); err == nil {
-		if err := exec.Command("brew", "list", "--cask", cask).Run(); err == nil {
-			return true
+	if len(appPaths) > 0 {
+		for _, path := range appPaths {
+			if isDir(path) {
+				return true
+			}
 		}
+		return false
 	}
-	for _, path := range appPaths {
-		if isDir(path) {
-			return true
-		}
+	if _, err := exec.LookPath("brew"); err == nil {
+		return exec.Command("brew", "list", "--cask", cask).Run() == nil
 	}
 	return false
 }
 
 func binaryOrAppDetail(name string, appPaths []string) string {
+	if len(appPaths) > 0 {
+		for _, path := range appPaths {
+			if isDir(path) {
+				return path
+			}
+		}
+		return "not installed"
+	}
 	if _, err := exec.LookPath("brew"); err == nil {
 		if err := exec.Command("brew", "list", "--cask", name).Run(); err == nil {
 			return "installed"
-		}
-	}
-	for _, path := range appPaths {
-		if isDir(path) {
-			return path
 		}
 	}
 	return "not installed"
@@ -415,6 +419,9 @@ func (a App) Restore(path, identity, output string) error {
 }
 
 func (a App) Unlock() error {
+	if runtime.GOOS == "darwin" && !caskOrAppAvailable("google-drive", []string{"/Applications/Google Drive.app"}) {
+		return fmt.Errorf("Google Drive for desktop is not installed")
+	}
 	if vaultAvailable(a.Config.Mount) {
 		fmt.Printf("Vault already unlocked: %s\n", a.Config.Mount)
 		return nil
