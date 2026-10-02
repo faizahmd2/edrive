@@ -12,9 +12,9 @@ import (
 const bindingVersion = 1
 
 type Binding struct {
-	Version   int       \`json:"version"\`
-	Path      string    \`json:"path"\`
-	CreatedAt time.Time \`json:"created_at"\`
+	Version int
+	Path string
+	CreatedAt time.Time
 }
 
 type State struct {
