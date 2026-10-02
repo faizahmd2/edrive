@@ -209,14 +209,7 @@ func (a App) Close() error {
 		return nil
 	}
 
-	storageRoot, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
-	if err != nil {
-		return err
-	}
-
-	vaultPath := filepath.Join(storageRoot, a.Config.StorageName)
 	client := cryptomator.New(cryptomator.Config{
-		VaultPath:  vaultPath,
 		MountPoint: a.Config.DataRoot,
 		CLIPath:    a.Config.CryptomatorCLI,
 		RuntimeDir: config.DefaultRuntimeDir(),
@@ -301,20 +294,15 @@ func (a App) Backup() error {
 		manifest,
 		archive,
 	)
-
-	var closeErr error
-	if createErr == nil {
-		closeErr = archive.Close()
-	} else {
-		_ = archive.Close()
-	}
 	if createErr != nil {
+		_ = archive.Close()
 		return createErr
 	}
-	if closeErr != nil {
-		return closeErr
+	if err := archive.Sync(); err != nil {
+		_ = archive.Close()
+		return err
 	}
-	if err := syncFile(archivePath); err != nil {
+	if err := archive.Close(); err != nil {
 		return err
 	}
 
@@ -358,10 +346,6 @@ func (a App) Backup() error {
 		return err
 	}
 	if err := writePrivateFile(filepath.Join(packageDir, "README.txt"), backupReadme); err != nil {
-		return err
-	}
-
-	if err := fsyncDir(packageDir); err != nil {
 		return err
 	}
 
@@ -661,32 +645,6 @@ func copyFileAtomic(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tempPath, dst)
-}
-
-func syncFile(path string) error {
-	f, err := os.OpenFile(path, os.O_RDONLY, 0600)
-	if err != nil {
-		return err
-	}
-	err = f.Sync()
-	closeErr := f.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
-}
-
-func fsyncDir(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	err = f.Sync()
-	closeErr := f.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
 }
 
 const backupReadme = "edrive backup set\n\nThis folder contains:\n- backup.tar.zst.age: the encrypted workspace backup\n- recovery-key.txt: the private recovery identity needed to decrypt it\n\nKeep this folder private. The recovery key is never displayed by edrive during normal operation.\n"
