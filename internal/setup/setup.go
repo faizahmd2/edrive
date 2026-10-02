@@ -32,8 +32,8 @@ type cryptomatorSettings struct {
 type githubRelease struct {
 	TagName string `json:"tag_name"`
 	Assets  []struct {
-		Name               string json:"name"
-		BrowserDownloadURL string json:"browser_download_url"
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
 	} `json:"assets"`
 }
 
@@ -231,9 +231,7 @@ func writeConfig(cfg config.Config) error {
 		fmt.Sprintf("EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE=%q", cfg.CryptomatorKeychainService),
 		fmt.Sprintf("EDRIVE_RUNTIME_DIR=%q", cfg.RuntimeDir),
 	}
-	if err := os.WriteFile(cfg.ConfigPath, []byte(strings.Join(lines, "
-")+"
-"), 0600); err != nil {
+	if err := os.WriteFile(cfg.ConfigPath, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return os.Chmod(cfg.ConfigPath, 0600)
@@ -258,8 +256,7 @@ func configureGoogleDrive(mirrorRoot string) error {
 	}
 	_ = exec.Command("open", "https://drive.google.com").Run()
 	fmt.Print("Press Enter after Google Drive is signed in and configured: ")
-	if _, err := input.ReadString('
-'); err != nil && err != io.EOF {
+	if _, err := input.ReadString('\n'); err != nil && err != io.EOF {
 		return err
 	}
 
@@ -273,8 +270,7 @@ func configureGoogleDrive(mirrorRoot string) error {
 
 func ensureFormula(name string) error {
 	if _, err := exec.LookPath(name); err == nil {
-		fmt.Printf("✓ %s
-", name)
+		fmt.Printf("✓ %s\n", name)
 		return nil
 	}
 	ok, err := askYesNo(fmt.Sprintf("%s is not installed. Install it with Homebrew? [y/N] ", name), false)
@@ -290,8 +286,7 @@ func ensureFormula(name string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("install %s: %w", name, err)
 	}
-	fmt.Printf("✓ %s
-", name)
+	fmt.Printf("✓ %s\n", name)
 	return nil
 }
 
@@ -325,7 +320,6 @@ func ensureCask(name string, appPaths []string) error {
 	fmt.Printf("✓ %s\n", name)
 	return nil
 }
-
 
 func ensureMacIdentity(cfg *config.Config) error {
 	if isReadableIdentity(cfg.MacIdentity) {
@@ -383,8 +377,7 @@ func ensureRecipients(path string, recipients ...string) error {
 	seen := make(map[string]bool)
 
 	if b, err := os.ReadFile(path); err == nil {
-		for _, line := range strings.Split(string(b), "
-") {
+		for _, line := range strings.Split(string(b), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
@@ -423,9 +416,7 @@ func ensureRecipients(path string, recipients ...string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "
-")+"
-"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
 		return fmt.Errorf("write recipients file: %w", err)
 	}
 	return os.Chmod(path, 0600)
@@ -462,8 +453,7 @@ func ensureVault(cfg *config.Config) (bool, error) {
 		fmt.Println("Store the vault password in the macOS Keychain.")
 		fmt.Println()
 		fmt.Print("Press Enter after the vault has been created/added: ")
-		if _, err := input.ReadString('
-'); err != nil && err != io.EOF {
+		if _, err := input.ReadString('\n'); err != nil && err != io.EOF {
 			return false, err
 		}
 		if !isDir(vault) || !fileExists(marker) {
@@ -631,8 +621,7 @@ func downloadCryptomatorCLI(toolsDir string) (string, error) {
 	if err := os.Chmod(cliPath, 0700); err != nil {
 		return "", err
 	}
-	fmt.Printf("✓ Cryptomator CLI downloaded: %s
-", release.TagName)
+	fmt.Printf("✓ Cryptomator CLI downloaded: %s\n", release.TagName)
 	return cliPath, nil
 }
 
@@ -697,8 +686,7 @@ func unzipSafe(zipPath, destination string) error {
 
 func askPath(prompt, defaultValue string) (string, error) {
 	fmt.Print(prompt)
-	line, err := input.ReadString('
-')
+	line, err := input.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return "", err
 	}
@@ -714,8 +702,7 @@ func askPath(prompt, defaultValue string) (string, error) {
 
 func askYesNo(prompt string, defaultYes bool) (bool, error) {
 	fmt.Print(prompt)
-	line, err := input.ReadString('
-')
+	line, err := input.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, err
 	}
@@ -778,8 +765,7 @@ func Purge() error {
 	fmt.Println("  Mac identity and recipients")
 	fmt.Println()
 	fmt.Print("Type PURGE to continue: ")
-	line, err := input.ReadString('
-')
+	line, err := input.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return err
 	}
@@ -817,4 +803,55 @@ func isMounted(path string) bool {
 	}
 	marker := " on " + filepath.Clean(path) + " ("
 	return strings.Contains(string(out), marker)
+}
+
+func isExecutableFile(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
+}
+
+func isDir(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func runtimeToolsDir() string {
+	return filepath.Join(filepath.Dir(config.DefaultRuntimeDir()), "tools")
+}
+
+func ageRecipient(path string) (string, error) {
+	out, err := exec.Command("age-keygen", "-y", path).Output()
+	if err != nil {
+		return "", fmt.Errorf("read age recipient: %w", err)
+	}
+
+	recipient := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(recipient, "age1") {
+		return "", fmt.Errorf("unexpected age recipient output")
+	}
+
+	return recipient, nil
+}
+
+func isReadableIdentity(path string) bool {
+	if path == "" {
+		return false
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+
+	return exec.Command("age-keygen", "-y", path).Run() == nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

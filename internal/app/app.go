@@ -126,7 +126,7 @@ func (a App) Doctor() error {
 	checks = append(checks, check{"Google Drive", caskOrAppAvailable("google-drive", []string{"/Applications/Google Drive.app"}), binaryOrAppDetail("google-drive", []string{"/Applications/Google Drive.app"})})
 	if a.Config.GoogleDriveRoot != "" && isDir(a.Config.GoogleDriveRoot) {
 		running := processRunning("Google Drive")
-		checks = append(checks, check{"Drive process", running, "running"} )
+		checks = append(checks, check{"Drive process", running, "running"})
 		if !running {
 			checks[len(checks)-1].detail = "not running"
 		}
@@ -614,18 +614,6 @@ func pruneSnapshots(store storage.Provider, keep int) error {
 		}
 	}
 	return nil
-}
-
-func ensureDir(path string) error {
-	if info, err := os.Stat(path); err == nil {
-		if !info.IsDir() {
-			return fmt.Errorf("not a directory: %s", path)
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return os.MkdirAll(path, 0700)
 }
 
 func formatBytes(n int64) string {
