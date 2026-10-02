@@ -37,11 +37,8 @@ func (c *Client) Unlock() error {
 	if mounted(c.cfg.MountPoint) {
 		return fmt.Errorf("vault already mounted at %s", c.cfg.MountPoint)
 	}
-	if c.cfg.VaultPath == "" || c.cfg.MountPoint == "" || c.cfg.CLIPath == "" {
+	if c.cfg.VaultPath == "" || c.cfg.MountPoint == "" || c.cfg.CLIPath == "" || c.cfg.RuntimeDir == "" {
 		return fmt.Errorf("Cryptomator is not configured")
-	}
-	if c.cfg.RuntimeDir == "" {
-		return fmt.Errorf("edrive runtime directory is not configured")
 	}
 
 	info, err := os.Stat(c.cfg.VaultPath)
@@ -56,7 +53,7 @@ func (c *Client) Unlock() error {
 	if vaultID == "" {
 		vaultID, err = DiscoverVaultID(c.cfg.VaultPath)
 		if err != nil {
-			return fmt.Errorf("discover Cryptomator vault: %w", err)
+			return fmt.Errorf("discover Cryptomator vault")
 		}
 	}
 
@@ -89,7 +86,7 @@ func (c *Client) Unlock() error {
 	}
 	if err := cmd.Start(); err != nil {
 		_ = cryptStdin.Close()
-		return fmt.Errorf("start Cryptomator CLI: %w", err)
+		return fmt.Errorf("start Cryptomator CLI")
 	}
 
 	waitDone := make(chan error, 1)
@@ -117,15 +114,14 @@ func (c *Client) Unlock() error {
 	if err := cryptStdin.Close(); err != nil {
 		terminate(cmd.Process.Pid)
 		<-waitDone
-		return fmt.Errorf("close Cryptomator stdin: %w", err)
+		return fmt.Errorf("close Cryptomator stdin")
 	}
 
 	pidPath := filepath.Join(c.cfg.RuntimeDir, "cryptomator.pid")
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if mounted(c.cfg.MountPoint) {
-			if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"
-"), 0600); err != nil {
+			if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0600); err != nil {
 				terminate(cmd.Process.Pid)
 				<-waitDone
 				return fmt.Errorf("write Cryptomator state: %w", err)
@@ -134,10 +130,7 @@ func (c *Client) Unlock() error {
 		}
 
 		select {
-		case err := <-waitDone:
-			if err != nil {
-				return fmt.Errorf("Cryptomator CLI exited before mounting; see %s", logPath)
-			}
+		case <-waitDone:
 			return fmt.Errorf("Cryptomator CLI exited before mounting; see %s", logPath)
 		default:
 		}
@@ -171,14 +164,16 @@ func (c *Client) Lock() error {
 
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if !mounted(c.cfg.MountPoint) {
+		mountedNow := mounted(c.cfg.MountPoint)
+		aliveNow := processExists(pid)
+		if !mountedNow && !aliveNow {
 			_ = os.Remove(pidPath)
 			return nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timed out waiting for Cryptomator to unmount")
+	return fmt.Errorf("timed out waiting for Cryptomator to close")
 }
 
 func DiscoverVaultID(vaultPath string) (string, error) {
@@ -186,6 +181,7 @@ func DiscoverVaultID(vaultPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	settingsPath := filepath.Join(home, "Library", "Application Support", "Cryptomator", "settings.json")
 	b, err := os.ReadFile(settingsPath)
 	if err != nil {
@@ -215,6 +211,7 @@ func DiscoverVaultID(vaultPath string) (string, error) {
 			return directory.ID, nil
 		}
 	}
+
 	return "", fmt.Errorf("vault is not registered in Cryptomator")
 }
 
@@ -226,8 +223,7 @@ func mounted(mountPoint string) bool {
 	if err != nil {
 		return false
 	}
-	marker := " on " + filepath.Clean(mountPoint) + " ("
-	return strings.Contains(string(out), marker)
+	return strings.Contains(string(out), " on "+filepath.Clean(mountPoint)+" (")
 }
 
 func processMatches(pid int, expectedCLI string) bool {
@@ -241,9 +237,21 @@ func processMatches(pid int, expectedCLI string) bool {
 	return strings.Contains(strings.TrimSpace(string(out)), expectedCLI)
 }
 
+func processExists(pid int) bool {
+	return exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "pid=").Run() == nil
+}
+
 func isExecutableFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
+}
+
+func canonicalPath(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
 }
 
 func terminate(pid int) {
