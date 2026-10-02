@@ -53,6 +53,44 @@ return POSIX path of chosenFolder`, escapeAppleScript(prompt))
 	return filepath.Clean(path), true, nil
 }
 
+func ChooseOption(prompt string, options []string, defaultIndex int) (string, bool, error) {
+	if len(options) == 0 {
+		return "", false, fmt.Errorf("no options were provided")
+	}
+	if defaultIndex < 0 || defaultIndex >= len(options) {
+		return "", false, fmt.Errorf("invalid default option")
+	}
+
+	items := make([]string, 0, len(options))
+	for _, option := range options {
+		items = append(items, fmt.Sprintf(`"%s"`, escapeAppleScript(option)))
+	}
+
+	script := fmt.Sprintf(`tell application "System Events" to activate
+
+set choices to {%s}
+set selectedItems to choose from list choices with prompt "%s" default items {"%s"}
+if selectedItems is false then return ""
+return item 1 of selectedItems`,
+		strings.Join(items, ", "),
+		escapeAppleScript(prompt),
+		escapeAppleScript(options[defaultIndex]),
+	)
+
+	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "User canceled") || strings.Contains(string(out), "(-128)") {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("choose option: %w", err)
+	}
+	selected := strings.TrimSpace(string(out))
+	if selected == "" {
+		return "", false, nil
+	}
+	return selected, true, nil
+}
+
 func ShellInitZsh() string {
 	return `# >>> edrive shell integration >>>
 edrive() {
@@ -69,12 +107,14 @@ edrive() {
   fi
   "$HOME/.local/bin/edrive" "$@"
 }
-# <<< edrive shell integration <<<` + "\n"
+# <<< edrive shell integration <<<` + "
+"
 }
 
 func Confirm(prompt string) (bool, error) {
 	fmt.Print(prompt + " [y/N] ")
-	line, err := input.ReadString('\n')
+	line, err := input.ReadString('
+')
 	if err != nil && err != io.EOF {
 		return false, err
 	}
@@ -90,7 +130,8 @@ func Confirm(prompt string) (bool, error) {
 
 func Pause(prompt string) error {
 	fmt.Print(prompt)
-	_, err := input.ReadString('\n')
+	_, err := input.ReadString('
+')
 	if err == io.EOF {
 		return nil
 	}
