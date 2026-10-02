@@ -9,6 +9,7 @@ import (
 
 	"github.com/faiz/edrive/internal/app"
 	"github.com/faiz/edrive/internal/config"
+	"github.com/faiz/edrive/internal/setup"
 )
 
 const version = "0.1.0"
@@ -17,8 +18,11 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `edrive %s - local-first encrypted developer identity toolkit
 
 	Usage:
+	edrive setup
 	edrive doctor
 	edrive status
+	edrive unlock
+	edrive lock
 	edrive backup
 	edrive backups
 	edrive verify [snapshot] --identity PATH
@@ -52,6 +56,18 @@ func main() {
 		return
 	}
 
+	if command == "setup" {
+		if len(os.Args) != 2 {
+			fmt.Fprintln(os.Stderr, "error: setup does not accept arguments")
+			os.Exit(2)
+		}
+		if err := setup.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if command == "identity" {
 		if err := identityCommand(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -82,7 +98,6 @@ func main() {
 		err = a.Backups()
 	case "unlock":
 		err = a.Unlock()
-
 	case "lock":
 		err = a.Lock()
 	case "verify":
@@ -179,8 +194,11 @@ func helpText() string {
 	return fmt.Sprintf(`edrive %s - local-first encrypted developer identity toolkit
 
 Usage:
+  edrive setup
   edrive doctor
   edrive status
+  edrive unlock
+  edrive lock
   edrive backup
   edrive backups
   edrive verify [snapshot] --identity PATH
