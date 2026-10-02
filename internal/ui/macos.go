@@ -65,3 +65,19 @@ func escapeAppleScript(value string) string {
 	value = strings.ReplaceAll(value, "\\", "\\\\")
 	return strings.ReplaceAll(value, "\"", "\\\"")
 }
+
+func Confirm(prompt string) (bool, error) {
+	fmt.Print(prompt + " [y/N] ")
+	var answer string
+	if _, err := fmt.Fscan(os.Stdin, &answer); err != nil {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return true, nil
+	case "", "n", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("please answer yes or no")
+	}
+}
