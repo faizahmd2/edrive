@@ -42,20 +42,18 @@ func main() {
 		fmt.Print(ui.ShellInitZsh())
 	case "setup":
 		run(command, setup.Run)
+	case "doctor":
+		cfg, err := config.Load(config.DefaultPath())
+		a := app.App{Config: cfg, ConfigError: err}
+		run(command, a.Doctor)
 	default:
 		cfg, err := config.Load(config.DefaultPath())
-		if command == "doctor" {
-			a := app.App{Config: cfg, ConfigError: err}
-			run(command, a.Doctor)
-		}
 		if err != nil {
 			fail(command, err)
 		}
 		a := app.App{Config: cfg}
 
 		switch command {
-		case "doctor":
-			run(command, a.Doctor)
 		case "open":
 			run(command, a.Open)
 		case "cd":
