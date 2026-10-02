@@ -143,7 +143,7 @@ func chooseWorkspace(cfg *config.Config) (bool, error) {
 		fmt.Println("Choose an empty folder. edrive will mount the workspace there.")
 		path, selected, err := ui.ChooseFolder("Choose edrive working folder", defaultDir)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if !selected {
 			fmt.Println("Setup cancelled.")
@@ -367,7 +367,10 @@ func ensureVault(root string) (string, error) {
 				fmt.Println("edrive's previous vault record points here, but the vault is incomplete.")
 				return chooseVaultParent(root)
 			}
-			return ensureRegistered(candidate)
+			if err := ensureRegistered(candidate); err != nil {
+				return "", err
+			}
+			return candidate, nil
 		}
 
 		if state.HasCryptomatorFiles {
