@@ -2,21 +2,19 @@ package vault
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/faiz/edrive/internal/config"
 )
 
-const (
-	MarkerFile    = ".edrive-vault.json"
-	MarkerVersion = 1
-)
+const bindingVersion = 1
 
-type Marker struct {
-	Product   string    `json:"product"`
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
+type Binding struct {
+	Version   int       \`json:"version"\`
+	Path      string    \`json:"path"\`
+	CreatedAt time.Time \`json:"created_at"\`
 }
 
 type State struct {
@@ -33,98 +31,106 @@ func Inspect(path string) (State, error) {
 		if os.IsNotExist(err) {
 			return State{Empty: true}, nil
 		}
-		return State{}, fmt.Errorf("inspect vault location: %w", err)
+		return State{}, err
 	}
 	if !info.IsDir() {
-		return State{}, fmt.Errorf("vault location is not a directory: %s", path)
+		return State{}, os.ErrInvalid
 	}
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return State{}, fmt.Errorf("read vault location: %w", err)
-	}
-
-	managed, err := IsManaged(path)
-	if err != nil {
 		return State{}, err
 	}
-
-	hasMasterkey := isFile(filepath.Join(path, "masterkey.cryptomator"))
-	hasVault := isFile(filepath.Join(path, "vault.cryptomator"))
+	masterkey := isFile(filepath.Join(path, "masterkey.cryptomator"))
+	vaultFile := isFile(filepath.Join(path, "vault.cryptomator"))
 	return State{
 		Exists:              true,
 		Empty:               len(entries) == 0,
-		Managed:             managed,
-		HasCryptomatorFiles: hasMasterkey || hasVault,
-		Complete:            hasMasterkey && hasVault,
+		Managed:             IsManaged(path),
+		HasCryptomatorFiles: masterkey || vaultFile,
+		Complete:            masterkey && vaultFile,
 	}, nil
 }
 
-func IsManaged(path string) (bool, error) {
-	b, err := os.ReadFile(filepath.Join(path, MarkerFile))
+func IsManaged(path string) bool {
+	binding, ok, err := ReadBinding()
+	if err != nil || !ok {
+		return false
+	}
+	return binding.Path == canonicalPath(path)
+}
+
+func ReadBinding() (Binding, bool, error) {
+	f, err := os.Open(filepath.Join(config.Home(), "vault.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return Binding{}, false, nil
 		}
-		return false, fmt.Errorf("read edrive vault marker: %w", err)
+		return Binding{}, false, err
 	}
-	var marker Marker
-	if err := json.Unmarshal(b, &marker); err != nil {
-		return false, fmt.Errorf("edrive vault marker is invalid: %w", err)
+	defer f.Close()
+
+	var binding Binding
+	if err := json.NewDecoder(f).Decode(&binding); err != nil {
+		return Binding{}, false, err
 	}
-	if marker.Product != "edrive" || marker.Version != MarkerVersion {
-		return false, fmt.Errorf("edrive vault marker belongs to an unsupported format")
+	if binding.Version != bindingVersion || binding.Path == "" {
+		return Binding{}, false, os.ErrInvalid
 	}
-	return true, nil
+	binding.Path = canonicalPath(binding.Path)
+	return binding, true, nil
 }
 
 func MarkManaged(path string) error {
-	if err := os.MkdirAll(path, 0700); err != nil {
-		return fmt.Errorf("create edrive vault location: %w", err)
+	path = canonicalPath(path)
+	if path == "" {
+		return os.ErrInvalid
 	}
-	managed, err := IsManaged(path)
-	if err != nil {
+	if err := os.MkdirAll(config.Home(), 0700); err != nil {
 		return err
 	}
-	if managed {
-		return nil
-	}
 
-	data, err := json.MarshalIndent(Marker{
-		Product:   "edrive",
-		Version:   MarkerVersion,
+	binding := Binding{
+		Version:   bindingVersion,
+		Path:      path,
 		CreatedAt: time.Now().UTC(),
-	}, "", "  ")
+	}
+	data, err := json.MarshalIndent(binding, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
 
-	tmp, err := os.CreateTemp(path, ".edrive-vault-*.tmp")
+	f, err := os.CreateTemp(config.Home(), ".vault-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create vault marker: %w", err)
+		return err
 	}
-	tmpPath := tmp.Name()
+	tmpPath := f.Name()
 	defer func() {
-		_ = tmp.Close()
+		_ = f.Close()
 		_ = os.Remove(tmpPath)
 	}()
-	if err := tmp.Chmod(0600); err != nil {
+	if err := f.Chmod(0600); err != nil {
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
+	if _, err := f.Write(data); err != nil {
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := f.Sync(); err != nil {
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, filepath.Join(path, MarkerFile)); err != nil {
-		return fmt.Errorf("save edrive vault marker: %w", err)
+	return os.Rename(tmpPath, filepath.Join(config.Home(), "vault.json"))
+}
+
+func canonicalPath(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
 	}
-	return nil
+	return path
 }
 
 func isFile(path string) bool {
