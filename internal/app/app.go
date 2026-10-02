@@ -27,15 +27,16 @@ type App struct {
 	Config config.Config
 }
 
+type check struct {
+	name   string
+	ok     bool
+	detail string
+}
+
 func (a App) Doctor() error {
 	fmt.Println("EDRIVE DOCTOR")
 	fmt.Println()
 
-	type check struct {
-		name   string
-		ok     bool
-		detail string
-	}
 	var checks []check
 
 	configOK := a.Config.ConfigFound && fileMode0600(a.Config.ConfigPath)
@@ -481,16 +482,8 @@ func loadRecipients(path string) (int, error) {
 	return count, nil
 }
 
-func toolCheck(name, path, version string) struct {
-	name   string
-	ok     bool
-	detail string
-} {
-	return struct {
-		name   string
-		ok     bool
-		detail string
-	}{name, toolVersionMatches(path, version), path}
+func toolCheck(name, path, version string) check {
+	return check{name: name, ok: toolVersionMatches(path, version), detail: path}
 }
 
 func toolVersionMatches(path, version string) bool {
