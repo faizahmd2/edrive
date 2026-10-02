@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -459,24 +458,3 @@ func writeConfig(
 	return os.Chmod(path, 0600)
 }
 
-// Keep setup's input handling intentionally small.
-func askYesNo(prompt string, defaultYes bool) (bool, error) {
-	fmt.Print(prompt)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return false, err
-	}
-	answer := strings.TrimSpace(strings.ToLower(line))
-	if answer == "" {
-		return defaultYes, nil
-	}
-	switch answer {
-	case "y", "yes":
-		return true, nil
-	case "n", "no":
-		return false, nil
-	default:
-		return false, fmt.Errorf("please answer yes or no")
-	}
-}
