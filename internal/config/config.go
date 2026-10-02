@@ -14,6 +14,7 @@ type Config struct {
 	ConfigFound                 bool
 	DataRoot                    string
 	GoogleDriveRoot             string
+	GoogleDriveReady             bool
 	Mount                       string
 	RecoveryDir                 string
 	Recipients                  string
@@ -109,6 +110,7 @@ func Load(path string) (Config, error) {
 		"EDRIVE_DATA_ROOT":                  true,
 		"EDRIVE_HOME":                       true,
 		"EDRIVE_GOOGLE_DRIVE_ROOT":          true,
+		"EDRIVE_GOOGLE_DRIVE_READY":          true,
 		"EDRIVE_MOUNT":                      true,
 		"EDRIVE_RECOVERY_DIR":               true,
 		"EDRIVE_RECIPIENTS":                 true,
@@ -164,6 +166,7 @@ func Load(path string) (Config, error) {
 	} else {
 		cfg.GoogleDriveRoot = filepath.Join(cfg.DataRoot, "google-drive-remote")
 	}
+	cfg.GoogleDriveReady = strings.EqualFold(strings.TrimSpace(values["EDRIVE_GOOGLE_DRIVE_READY"]), "1") || strings.EqualFold(strings.TrimSpace(values["EDRIVE_GOOGLE_DRIVE_READY"]), "true")
 	if v := strings.TrimSpace(values["EDRIVE_MOUNT"]); v != "" {
 		cfg.Mount = Expand(v)
 	} else {
