@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const CurrentVersion = 1
+const CurrentVersion = 2
 
 type Config struct {
 	ConfigPath      string `json:"-"`
@@ -18,19 +18,18 @@ type Config struct {
 	StorageProvider string `json:"storage_provider"`
 	StorageName     string `json:"storage_name"`
 	LastBackupDir   string `json:"last_backup_dir,omitempty"`
-	Recipients      string `json:"recipients"`
 	AgePath         string `json:"age_path,omitempty"`
 	ZstdPath        string `json:"zstd_path,omitempty"`
 	CryptomatorCLI  string `json:"cryptomator_cli,omitempty"`
 }
 
-func DefaultHome() string {
+func Home() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".edrive")
 }
 
 func DefaultPath() string {
-	return filepath.Join(DefaultHome(), "config.json")
+	return filepath.Join(Home(), "config.json")
 }
 
 func DefaultDataRoot() string {
@@ -38,27 +37,24 @@ func DefaultDataRoot() string {
 	return filepath.Join(home, "edrive")
 }
 
-func DefaultRecipients() string {
-	return filepath.Join(DefaultHome(), "recipients.txt")
+func DevicesPath() string {
+	return filepath.Join(Home(), "devices.json")
 }
 
-func DefaultRuntimeDir() string {
-	return filepath.Join(DefaultHome(), "runtime")
+func RuntimeDir() string {
+	return filepath.Join(Home(), "runtime")
 }
 
-func DefaultToolsDir() string {
-	return filepath.Join(DefaultHome(), "tools")
+func ToolsDir() string {
+	return filepath.Join(Home(), "tools")
 }
 
-func DefaultTempDir() string {
-	return filepath.Join(DefaultHome(), "tmp")
+func TempDir() string {
+	return filepath.Join(Home(), "tmp")
 }
 
 func Expand(path string) string {
 	path = strings.TrimSpace(path)
-	if path == "" {
-		return path
-	}
 	if path == "~" {
 		home, _ := os.UserHomeDir()
 		return home
@@ -80,7 +76,6 @@ func Defaults(path string) Config {
 		DataRoot:        DefaultDataRoot(),
 		StorageProvider: "google-drive",
 		StorageName:     "edrive",
-		Recipients:      DefaultRecipients(),
 	}
 }
 
@@ -92,12 +87,12 @@ func Load(path string) (Config, error) {
 		if os.IsNotExist(err) {
 			return cfg, nil
 		}
-		return Config{}, fmt.Errorf("open config %s: %w", cfg.ConfigPath, err)
+		return Config{}, fmt.Errorf("open config: %w", err)
 	}
 	defer f.Close()
 
 	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("decode config %s: %w", cfg.ConfigPath, err)
+		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 	cfg.ConfigPath = Defaults(cfg.ConfigPath).ConfigPath
 	cfg.ConfigFound = true
@@ -108,33 +103,14 @@ func Load(path string) (Config, error) {
 	if cfg.Version != CurrentVersion {
 		return Config{}, fmt.Errorf("unsupported edrive config version: %d", cfg.Version)
 	}
-	if cfg.DataRoot == "" {
-		cfg.DataRoot = DefaultDataRoot()
-	}
-	cfg.DataRoot = Expand(cfg.DataRoot)
-	if cfg.StorageProvider == "" {
-		cfg.StorageProvider = "google-drive"
-	}
-	if cfg.StorageName == "" {
-		cfg.StorageName = "edrive"
-	}
-	if cfg.Recipients == "" {
-		cfg.Recipients = DefaultRecipients()
-	} else {
-		cfg.Recipients = Expand(cfg.Recipients)
-	}
-	if cfg.LastBackupDir != "" {
-		cfg.LastBackupDir = Expand(cfg.LastBackupDir)
-	}
-	if cfg.AgePath != "" {
-		cfg.AgePath = Expand(cfg.AgePath)
-	}
-	if cfg.ZstdPath != "" {
-		cfg.ZstdPath = Expand(cfg.ZstdPath)
-	}
-	if cfg.CryptomatorCLI != "" {
-		cfg.CryptomatorCLI = Expand(cfg.CryptomatorCLI)
-	}
+	cfg.DataRoot = ExpandOrDefault(cfg.DataRoot, DefaultDataRoot())
+	cfg.StorageProvider = ExpandOrDefault(cfg.StorageProvider, "google-drive")
+	cfg.StorageName = ExpandOrDefault(cfg.StorageName, "edrive")
+	cfg.LastBackupDir = Expand(cfg.LastBackupDir)
+	cfg.AgePath = Expand(cfg.AgePath)
+	cfg.ZstdPath = Expand(cfg.ZstdPath)
+	cfg.CryptomatorCLI = Expand(cfg.CryptomatorCLI)
+
 	return cfg, nil
 }
 
@@ -143,21 +119,22 @@ func (c Config) Save() error {
 		return fmt.Errorf("config path is required")
 	}
 	if err := os.MkdirAll(filepath.Dir(c.ConfigPath), 0700); err != nil {
-		return fmt.Errorf("create edrive home: %w", err)
+		return fmt.Errorf("create edrive state: %w", err)
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(c.ConfigPath), ".config-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temporary config: %w", err)
+		return fmt.Errorf("create config temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	cleanup := func() {
+	defer func() {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
-	}
-	defer cleanup()
+	}()
 
-	_ = tmp.Chmod(0600)
+	if err := tmp.Chmod(0600); err != nil {
+		return err
+	}
 	enc := json.NewEncoder(tmp)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(c); err != nil {
@@ -170,7 +147,14 @@ func (c Config) Save() error {
 		return fmt.Errorf("close config: %w", err)
 	}
 	if err := os.Rename(tmpPath, c.ConfigPath); err != nil {
-		return fmt.Errorf("finalize config: %w", err)
+		return fmt.Errorf("save config: %w", err)
 	}
 	return os.Chmod(c.ConfigPath, 0600)
+}
+
+func ExpandOrDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return Expand(value)
 }
