@@ -44,6 +44,7 @@ func ChooseFolder(prompt, defaultDir string) (string, bool, error) {
 		}
 		return "", false, fmt.Errorf("choose folder: %w", err)
 	}
+
 	path := strings.TrimSpace(string(out))
 	if path == "" {
 		return "", false, fmt.Errorf("no folder selected")
@@ -51,10 +52,8 @@ func ChooseFolder(prompt, defaultDir string) (string, bool, error) {
 	return filepath.Clean(path), true, nil
 }
 
-func ShellInitZsh(binary string) string {
-	binary = filepath.Clean(binary)
-	quoted := shellQuote(binary)
-	return fmt.Sprintf("# >>> edrive shell integration >>>\nedrive() {\n  if [[ \"$1\" == \"cd\" ]]; then\n    shift\n    if (( $# > 0 )); then\n      echo \"edrive cd does not accept arguments\" >&2\n      return 2\n    fi\n    local dir\n    dir=$(%s cd) || return\n    builtin cd -- \"$dir\"\n    return\n  fi\n  %s \"$@\"\n}\n# <<< edrive shell integration <<<\n", quoted, quoted)
+func ShellInitZsh() string {
+	return "# >>> edrive shell integration >>>\nedrive() {\n  if [[ \"$1\" == \"cd\" ]]; then\n    shift\n    if (( $# > 0 )); then\n      echo \"edrive cd does not accept arguments\" >&2\n      return 2\n    fi\n    local dir\n    dir=$(\"$HOME/.local/bin/edrive\" cd) || return\n    builtin cd -- \"$dir\"\n    return\n  fi\n  \"$HOME/.local/bin/edrive\" \"$@\"\n}\n# <<< edrive shell integration <<<\n"
 }
 
 func isDir(path string) bool {
@@ -63,9 +62,6 @@ func isDir(path string) bool {
 }
 
 func escapeAppleScript(value string) string {
-	return strings.NewReplacer("\\", "\\\\", "\" , "\\"").Replace(value)
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'"\"'") + "'"
+	value = strings.ReplaceAll(value, "\\", "\\\\")
+	return strings.ReplaceAll(value, "\"", "\\\"")
 }
