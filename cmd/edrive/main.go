@@ -115,9 +115,5 @@ is saved. The previous backup destination is remembered for the next backup.
 
 Normal command errors are intentionally short. Run:
   edrive doctor
-
-Config override:
-  EDRIVE_CONFIG
-  default: ~/.edrive/config.json
 `, version)
 }
