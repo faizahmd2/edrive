@@ -255,26 +255,59 @@ func detailPathOrError(path string, err error) string {
 }
 
 func (a App) Status() error {
-	mount, mountErr := os.Stat(a.Config.Mount)
+	fmt.Printf("data root:  %s\n", a.Config.DataRoot)
+	fmt.Printf("drive root: %s\n", a.Config.GoogleDriveRoot)
 	fmt.Printf("mount:      %s\n", a.Config.Mount)
-	if mountErr != nil || !mount.IsDir() || !vaultAvailable(a.Config.Mount) {
+
+	if runtime.GOOS == "darwin" {
+		if caskOrAppAvailable("google-drive", []string{"/Applications/Google Drive.app"}) {
+			fmt.Println("Google Drive: installed")
+		} else {
+			fmt.Println("Google Drive: missing")
+		}
+	}
+
+	if !isDir(a.Config.Mount) || !vaultAvailable(a.Config.Mount) {
 		fmt.Println("state:      LOCKED / unavailable")
 	} else {
 		fmt.Println("state:      UNLOCKED / available")
 	}
+
 	fmt.Printf("recovery:   %s\n", a.Config.RecoveryDir)
 	fmt.Printf("recipients: %s\n", a.Config.Recipients)
-	store, err := storage.NewLocal(a.Config.RecoveryDir)
+
+	if !isDir(a.Config.RecoveryDir) {
+		fmt.Println("snapshots:  0")
+		fmt.Println("latest:     none")
+		return nil
+	}
+
+	entries, err := os.ReadDir(a.Config.RecoveryDir)
 	if err != nil {
 		return err
 	}
-	objects, err := store.List(".tar.zst.age")
-	if err != nil {
-		return err
+	count := 0
+	var latest os.DirEntry
+	var latestMod time.Time
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".tar.zst.age") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		count++
+		if latest == nil || info.ModTime().After(latestMod) {
+			latest = entry
+			latestMod = info.ModTime()
+		}
 	}
-	fmt.Printf("snapshots:  %d\n", len(objects))
-	if len(objects) > 0 {
-		fmt.Printf("latest:     %s\n", objects[0].Name)
+	fmt.Printf("snapshots:  %d\n", count)
+	if latest != nil {
+		fmt.Printf("latest:     %s\n", latest.Name())
+	} else {
+		fmt.Println("latest:     none")
 	}
 	return nil
 }
