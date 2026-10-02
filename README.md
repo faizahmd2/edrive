@@ -2,21 +2,54 @@
 
 edrive is a local-first encrypted workspace for one person.
 
-edrive is the control/orchestration layer. Google Drive stores and syncs the encrypted vault. Cryptomator owns the live encryption and password. FUSE-T provides the mounted filesystem. edrive does not replace any of those tools.
+The core rule is:
+
+**edrive is not a realtime cloud-sync application.**
+
+Your working files live locally. Cryptomator encrypts them. rclone moves the already-encrypted Cryptomator vault to and from the cloud only when you explicitly run push or pull.
+
+## Architecture
+
+~~~
+Cloud provider
+     │
+rclone remote
+     │
+edrive-cloud:edrive
+     │
+edrive pull / push
+     │
+~/.edrive/vault/
+Cryptomator encrypted vault
+     │
+Cryptomator CLI
+     │
+~/.edrive/workspace/
+plaintext files
+~~~
+
+There is no Google Drive Desktop dependency and no local Google Drive mirror.
+
+The same Cryptomator vault can also be opened from the Cryptomator mobile apps. Current Cryptomator documentation lists Google Drive as a native cloud service on Android and iOS and documents adding an existing vault directly. citeturn337950search0turn337950search2
+
+rclone's normal crypt backend is deliberately not used. It creates an rclone-specific encrypted format, not a Cryptomator vault. The cloud copy therefore remains a normal Cryptomator vault that Cryptomator mobile can understand.
 
 ## Commands
 
-```
+~~~
 edrive setup
 edrive doctor
 
 edrive open
-edrive cd
-edrive unlock
 edrive lock
+
+edrive push
+edrive pull
 
 edrive backup
 edrive decode <encrypted-file> <recovery-key>
+
+edrive remove
 
 edrive device add <label>
 edrive device list
@@ -24,188 +57,258 @@ edrive device remove <label>
 
 edrive help
 edrive version
-```
+~~~
 
-There is no separate status, verify, backups, restore, or snapshot workflow.
+There is no cd command, shell integration, Google Drive folder chooser, or realtime sync daemon.
+
+## Fixed local layout
+
+Everything owned by edrive lives under:
+
+~~~
+~/.edrive/
+├── config.json
+├── workspace/       # plaintext mount point
+├── vault/           # local Cryptomator encrypted vault
+├── backups/         # independent recovery backups
+├── devices.json
+├── runtime/
+├── tools/
+└── tmp/
+~~~
+
+The workspace and vault locations are fixed. Setup does not ask the user to choose folders.
 
 ## Setup
 
-Every `edrive setup` is a fresh setup.
+Run:
 
-If configuration already exists, edrive first asks whether to rebuild it. The prompt tells the user to run `edrive doctor` first when they want to inspect the existing installation.
+~~~
+edrive setup
+~~~
 
-Fresh setup does not delete Google Drive data, Cryptomator vaults, or Keychain identities. It rebuilds edrive's local configuration while keeping existing device identities so existing backups remain decryptable.
+Setup installs missing dependencies through Homebrew on macOS:
 
-The setup flow is:
+~~~
+rclone
+age
+zstd
+FUSE-T
+Cryptomator
+Cryptomator CLI 0.6.2
+~~~
 
-1. Check all required local applications and pinned tools together. Missing pieces are listed together with the next action.
-2. Choose the folder where the decrypted workspace will be mounted. edrive does not silently reuse the old workspace.
-3. Choose which local Google Drive My Drive edrive should use. If multiple known Google Drive locations exist, edrive presents those exact locations as explicit choices instead of using a general folder chooser that could accidentally select the workspace. A separate "choose another" option is available for a local mirror folder that edrive could not discover automatically. A mirrored folder is valid and a streamed folder is valid. If it is not discoverable, edrive explains what to do, opens Google Drive, waits for confirmation, and checks again.
-4. Resolve the edrive Cryptomator vault. An existing Cryptomator vault is never silently assumed to belong to edrive. edrive keeps a small non-secret ownership binding outside the encrypted vault so it can identify the selected edrive vault without placing metadata inside encrypted data.
+When the rclone remote named edrive-cloud does not exist, setup starts rclone config inside the setup flow. Create the remote with that exact name. For Google Drive, choose Google Drive and complete the browser authentication. rclone's official Drive setup is browser based through rclone config. citeturn337950search6turn337950search9
 
-The selected Google Drive storage root can never be the same as, contain, or be contained by the configured plaintext workspace.
+After login, setup uses the fixed remote path:
 
-Before opening Cryptomator, setup explains the exact action the user needs to perform. For a new vault it says which vault name and storage location to choose. For an existing unregistered vault it explains how to add that vault. After the user confirms, edrive checks the resulting files and Cryptomator registration.
+~~~
+edrive-cloud:edrive
+~~~
 
-## Isolation
+If that remote already contains a Cryptomator vault, edrive pulls it into the fixed local vault.
 
-edrive does not own the Google Drive application or all of its local storage.
+If no remote vault exists, setup opens Cryptomator once so the user can create:
 
-edrive does not own the Cryptomator application or every Cryptomator vault on the machine.
+~~~
+~/.edrive/vault
+~~~
 
-Only the selected Google Drive local root and the selected edrive vault are recorded in edrive configuration.
+That is the only normal GUI operation required for vault creation/registration. Setup then verifies the vault is registered and that its password is stored in macOS Keychain.
 
-An unrelated Cryptomator vault is left untouched. A foreign vault at the default `edrive` location causes setup to ask before adoption. If the user declines, setup asks for another location instead of overwriting the existing vault.
+There are no Google Drive Desktop checks and no folder-selection dialogs.
 
-edrive keeps a small non-secret ownership binding in `~/.edrive/vault.json`. It records which vault path belongs to this edrive installation. The binding is deliberately outside the Cryptomator vault; it contains no recovery key, vault password, or encrypted file contents.
+Cryptomator itself is not a sync tool. Its desktop documentation expects the encrypted vault to be synchronized by another cloud-sync tool. edrive uses rclone for exactly that role. citeturn337950search5
 
-## Live workspace
+## Mac workflow
 
-The configured workspace is a plaintext mount point, for example:
+Open the local vault:
 
-```
-~/edrive
-```
+~~~
+edrive open
+~~~
 
-`edrive open`, `edrive cd`, and `edrive unlock` ensure that the selected edrive vault is available through Cryptomator before exposing the workspace.
+The plaintext workspace is:
 
-`edrive lock` only terminates the Cryptomator process that edrive started and tracks. It does not terminate an unrelated Cryptomator process.
+~~~
+~/.edrive/workspace
+~~~
 
-## Doctor
+Work normally.
 
-`edrive doctor` is the diagnostic authority for the entire local lifecycle.
+When finished:
 
-It checks the configuration file, workspace, Google Drive application and local files, edrive vault ownership and completeness, Cryptomator registration, pinned tools, FUSE-T, device identities, and recovery-key state.
+~~~
+edrive lock
+edrive push
+~~~
 
-Doctor continues checking independent parts even when one part is broken. It reports the disease and a concrete recovery direction, such as restoring a deleted CLI, making Google Drive files available, selecting a replacement workspace, or re-registering an edrive vault.
+Push synchronizes only the encrypted Cryptomator vault to:
 
-If the configuration file itself is malformed or cannot be opened, doctor still reports that as a configuration problem instead of failing before the diagnostic starts.
+~~~
+edrive-cloud:edrive
+~~~
 
-## Backup
+To bring changes from another device back:
 
-```
-edrive backup
-```
+~~~
+edrive pull
+edrive open
+~~~
 
-Backup first accesses the edrive recovery item in macOS Keychain. On the first backup, the recovery identity is generated once and stored there. On later backups the same identity is reused.
+Both push and pull require the workspace to be locked.
 
-Backup then ensures the live workspace is unlocked before archiving it.
+This is intentional manual synchronization. There is no background sync process.
 
-The user chooses the destination folder with a Finder dialog. The last backup directory is remembered and used as the next dialog's starting location.
+## Phone workflow
 
-The selected directory receives:
+The phone does not need edrive.
 
-```
-edrive-backup-YYYYMMDD-HHMMSS.tar.zst.age
-edrive-recovery-key.txt   # only when the key file is missing
-```
+For Google Drive, connect the Google Drive account in Cryptomator Mobile and add the existing edrive vault. Cryptomator documents direct Google Drive access and adding an existing vault on mobile. citeturn337950search0turn337950search2
 
-The recovery-key file is never printed by edrive. An existing recovery-key file is validated against the current recovery identity and is not overwritten.
+A typical monthly phone session is:
 
-Backup streams directly into the final destination through a temporary partial file. Failed partial output is removed.
+~~~
+Phone:
+  Cryptomator → Google Drive → edrive vault → edit → lock
 
-After a successful backup, the destination folder is opened in Finder.
+Later on Mac:
+  edrive pull
+  edrive open
+~~~
 
-## Recovery
+Do not publish from a stale Mac vault after changing the vault on the phone. Pull first so the local encrypted vault contains the latest remote state.
 
-The Cryptomator password and edrive recovery key are different things.
+edrive intentionally uses a simple single-writer workflow rather than implementing a realtime conflict-resolution engine.
 
-The Cryptomator password unlocks the live vault and remains under Cryptomator's Keychain management.
+## Push and pull semantics
 
-The edrive recovery key is independent backup-decryption material. It is stored in macOS Keychain and its matching recipient is included in every future backup.
+Push treats the local encrypted vault as authoritative for that operation.
 
-That separation means backup recovery does not require the live Cryptomator mount to be available.
+Pull treats the remote encrypted vault as authoritative for that operation.
 
-## Decode and recovery
+Because these are explicit operations, edrive can keep the state model simple:
 
-```
-edrive decode /path/to/backup.tar.zst.age /path/to/edrive-recovery-key.txt
-```
+~~~
+open
+work
+lock
+push
 
-`edrive decode` is intentionally independent of edrive setup.
+or
 
-It performs the complete recovery pipeline:
+pull
+open
+work
+~~~
 
-```
-.tar.zst.age
-    ↓ age decrypt
-.tar.zst stream
-    ↓ zstd decompress
-tar stream
-    ↓ extract
-recovered-folder/
-```
+Do not run push or pull while the Cryptomator mount is active.
 
-No intermediate `.tar.zst` file is left on disk.
+## Recovery backup
 
-For:
+The live cloud vault and recovery backup are separate.
 
-```
-edrive-backup-20261002-180139.tar.zst.age
-```
+Live cloud data:
 
-the result is:
+~~~
+plaintext
+   ↓
+Cryptomator
+   ↓
+encrypted vault
+   ↓
+rclone
+   ↓
+cloud
+~~~
 
-```
-edrive-backup-20261002-180139/
-├── ...
-```
+Independent recovery export:
 
-The output folder is created as a sibling of the encrypted backup. edrive never overwrites an existing output folder.
+~~~
+plaintext workspace
+   ↓
+tar
+   ↓
+zstd
+   ↓
+age
+   ↓
+~/.edrive/backups/*.tar.zst.age
+~~~
 
-Decode requires the `age` and `zstd` commands, plus the supplied recovery-key file. It does not require edrive setup, Google Drive, or Cryptomator.
+age and zstd are only used for this independent recovery path.
 
-Archive entries are checked before extraction so an archive cannot escape the recovery folder through paths such as `../...` or absolute paths.
+The recovery identity is stored in macOS Keychain. The matching recovery key file is written once beside the backups.
 
-## Devices
+Decode remains independent:
 
-Device labels are the user-facing identity model:
+~~~
+edrive decode backup.tar.zst.age edrive-recovery-key.txt
+~~~
 
-```
-edrive device add phone-1
-edrive device list
-edrive device remove phone-1
-```
+It decrypts, decompresses, and extracts into a new sibling folder without requiring setup, rclone, Google Drive, or Cryptomator.
 
-Private device identity material stays in the platform secure store. Only public recipient metadata and the label are kept in the local registry.
+## Remove
 
-Setup creates the default local device `mac-1` when one is not already registered.
+Run:
 
-## State
+~~~
+edrive remove
+~~~
 
-edrive keeps private control state under:
+Removal removes the local workspace, local encrypted vault, configuration, runtime state, and device registry.
 
-```
-~/.edrive/
-├── config.json
-├── devices.json
-├── tools/
-├── runtime/
-└── tmp/
-```
+It does not delete:
 
-The vault ownership binding is also stored under `~/.edrive/vault.json`. It is non-secret metadata.
+- the remote encrypted vault
+- local recovery backups
+- Keychain identities
 
-No encrypted backup archive or private recovery key is retained there after a backup.
+Dependencies are separate from edrive. Removal asks whether to uninstall:
 
-## Pinned dependencies
+~~~
+age
+zstd
+rclone
+FUSE-T
+Cryptomator CLI
+~~~
 
-```
-age                1.3.2
-zstd               1.5.7
-Cryptomator CLI    0.6.2
-```
+Cryptomator Desktop is deliberately not removed automatically. When you no longer need it, uninstall it separately:
 
-edrive does not fetch a moving `latest` dependency during setup.
+~~~
+brew uninstall --cask cryptomator
+~~~
+
+## Dependencies and packaging direction
+
+The source bootstrap builds edrive itself. Runtime setup installs missing tools when they are absent.
+
+The intended distribution is a native package for each platform so that the end user eventually gets the same dependency experience from:
+
+~~~
+brew install edrive
+~~~
+
+or an appropriate Linux package with its declared dependencies.
+
+The current source implementation is end-to-end for macOS. Linux packaging/support should be added only when the Linux Keychain, FUSE, Cryptomator CLI packaging, and service-management pieces are implemented together.
+
+Cryptomator CLI itself is distributed separately from the desktop application and uses a third-party filesystem integration such as FUSE-T on macOS. The pinned CLI version in edrive is 0.6.2. citeturn624796search1turn624796search0
 
 ## Design constraints
 
-- No remote edrive service.
+- No Google Drive Desktop dependency.
+- No realtime sync daemon.
+- No local Google Drive mirror.
+- No Google Drive path discovery.
+- No user-selected workspace path.
+- rclone owns cloud login and transport.
+- Cryptomator owns live encryption and vault passwords.
+- edrive owns orchestration and lifecycle.
 - No custom cryptography.
-- No second sync engine.
-- No Google OAuth handling inside edrive.
-- No silent adoption of unrelated Google Drive or Cryptomator resources.
-- No persistent plaintext backup archive.
-- External applications keep ownership of their own credentials and infrastructure.
-- Temporary sensitive files have explicit cleanup.
-- Runtime behavior does not depend on the development repository layout.
+- No remote edrive service.
+- No second cloud-sync engine.
+- age and zstd are only for independent recovery backups.
+- Setup never deletes remote vault data.
+- Remove never deletes remote vault data, recovery backups, or Keychain identities.

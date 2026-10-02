@@ -6,12 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/faizahmd2/edrive/internal/ageutil"
-	"github.com/faizahmd2/edrive/internal/backup"
-	"github.com/faizahmd2/edrive/internal/config"
-	"github.com/faizahmd2/edrive/internal/device"
-	"github.com/faizahmd2/edrive/internal/keychain"
-	"github.com/faizahmd2/edrive/internal/ui"
+	"github.com/faiz/edrive/internal/ageutil"
+	"github.com/faiz/edrive/internal/backup"
+	"github.com/faiz/edrive/internal/config"
+	"github.com/faiz/edrive/internal/device"
+	"github.com/faiz/edrive/internal/keychain"
 )
 
 const recoveryFileName = "edrive-recovery-key.txt"
@@ -26,35 +25,17 @@ func (a App) Backup() error {
 		return err
 	}
 
-	// Access Keychain before doing backup work. The first backup creates one
-	// stable recovery identity; later backups reuse it.
 	recoveryIdentity, err := ensureRecoveryIdentity(agePath)
 	if err != nil {
 		return err
 	}
-
 	if err := a.ensureUnlocked(); err != nil {
 		return err
 	}
 
-	defaultDir := a.Config.LastBackupDir
-	if !isDir(defaultDir) {
-		defaultDir = defaultHome()
-	}
-
-	destination, selected, err := ui.ChooseFolder("Choose where to save the edrive backup", defaultDir)
-	if err != nil {
-		return err
-	}
-	if !selected {
-		fmt.Println("Backup cancelled.")
-		return nil
-	}
-	if inside(a.Config.DataRoot, destination) {
-		return fmt.Errorf("backup destination cannot be inside the edrive workspace")
-	}
-	if !isDir(destination) {
-		return fmt.Errorf("backup destination is unavailable: %s", destination)
+	destination := config.BackupDir()
+	if err := os.MkdirAll(destination, 0700); err != nil {
+		return fmt.Errorf("create backup directory: %w", err)
 	}
 
 	deviceRecipients, err := device.Recipients()
@@ -84,7 +65,7 @@ func (a App) Backup() error {
 		return fmt.Errorf("create backup file: %w", err)
 	}
 
-	if err := backup.Create(a.Config.DataRoot, recipients, agePath, zstdPath, out); err != nil {
+	if err := backup.Create(config.WorkspacePath(), recipients, agePath, zstdPath, out); err != nil {
 		_ = out.Close()
 		_ = os.Remove(partialPath)
 		return err
@@ -103,20 +84,12 @@ func (a App) Backup() error {
 		return fmt.Errorf("finalize backup: %w", err)
 	}
 
-	a.Config.LastBackupDir = destination
-	if err := a.Config.Save(); err != nil {
-		return err
-	}
-	if err := ui.Open(destination); err != nil {
-		fmt.Println("Backup completed, but Finder could not be opened.")
-	}
-
 	fmt.Println()
 	fmt.Println("Backup saved:", finalPath)
 	if exported {
 		fmt.Println("Recovery key saved:", recoveryPath)
 	} else {
-		fmt.Println("Recovery key already exists in this backup folder.")
+		fmt.Println("Recovery key already exists:", recoveryPath)
 	}
 	return nil
 }
