@@ -104,6 +104,7 @@ func confirmFreshSetup() (bool, error) {
 	fmt.Println("An edrive configuration already exists.")
 	fmt.Println("Fresh setup will rebuild edrive from the beginning.")
 	fmt.Println("It will not delete your Google Drive files, Cryptomator vaults, or Keychain identities.")
+	fmt.Println("Your existing edrive device identities are kept so existing backups remain decryptable.")
 	fmt.Println("Run 'edrive doctor' first when you want to inspect the current installation.")
 	fmt.Println()
 
@@ -127,9 +128,6 @@ func confirmFreshSetup() (bool, error) {
 
 	if err := os.Remove(config.DefaultPath()); err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("remove old edrive configuration: %w", err)
-	}
-	if err := os.Remove(config.DevicesPath()); err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("remove old device registry: %w", err)
 	}
 	return true, nil
 }
