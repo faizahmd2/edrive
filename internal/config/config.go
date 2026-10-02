@@ -1,37 +1,34 @@
 package config
 
 import (
-	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
+const CurrentVersion = 1
+
 type Config struct {
-	ConfigPath                 string
-	ConfigFound                 bool
-	DataRoot                    string
-	GoogleDriveRoot             string
-	GoogleDriveReady             bool
-	Mount                       string
-	RecoveryDir                 string
-	Recipients                  string
-	MacIdentity                 string
-	RecoveryIdentity            string
-	SnapshotKeep                int
-	CryptomatorVault            string
-	CryptomatorVaultID          string
-	CryptomatorCLI              string
-	CryptomatorMounter          string
-	CryptomatorKeychainService  string
-	RuntimeDir                  string
+	ConfigPath      string `json:"-"`
+	ConfigFound     bool   `json:"-"`
+	Version         int    `json:"version"`
+	DataRoot        string `json:"data_root"`
+	StorageProvider string `json:"storage_provider"`
+	StorageName     string `json:"storage_name"`
+	LastBackupDir   string `json:"last_backup_dir,omitempty"`
+	Recipients      string `json:"recipients"`
+	CryptomatorCLI  string `json:"cryptomator_cli,omitempty"`
+}
+
+func DefaultHome() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".edrive")
 }
 
 func DefaultPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library/Application Support/edrive/config.sh")
+	return filepath.Join(DefaultHome(), "config.json")
 }
 
 func DefaultDataRoot() string {
@@ -39,22 +36,24 @@ func DefaultDataRoot() string {
 	return filepath.Join(home, "edrive")
 }
 
+func DefaultRecipients() string {
+	return filepath.Join(DefaultHome(), "recipients.txt")
+}
+
 func DefaultRuntimeDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library/Application Support/edrive/runtime")
+	return filepath.Join(DefaultHome(), "runtime")
 }
 
-func DefaultIdentityDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library/Application Support/edrive/identities")
+func DefaultToolsDir() string {
+	return filepath.Join(DefaultHome(), "tools")
 }
 
-func DefaultRecoveryIdentity() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "edrive-recovery-identity.txt")
+func DefaultTempDir() string {
+	return filepath.Join(DefaultHome(), "tmp")
 }
 
 func Expand(path string) string {
+	path = strings.TrimSpace(path)
 	if path == "" {
 		return path
 	}
@@ -69,157 +68,101 @@ func Expand(path string) string {
 	return path
 }
 
-// Load reads simple KEY=value configuration. It does not execute shell code
-// and does not expand environment variables. Missing configuration is allowed
-// so that "edrive doctor" can diagnose a fresh machine.
-func Load(path string) (Config, error) {
-	path = Expand(path)
+func Defaults(path string) Config {
 	if path == "" {
 		path = DefaultPath()
 	}
-
-	cfg := Config{
-		ConfigPath:                path,
-		DataRoot:                  DefaultDataRoot(),
-		RecoveryDir:               filepath.Join(DefaultDataRoot(), "recovery"),
-		GoogleDriveRoot:           filepath.Join(DefaultDataRoot(), "google-drive-remote"),
-		Mount:                     filepath.Join(DefaultDataRoot(), "edrive"),
-		Recipients:                filepath.Join(DefaultIdentityDir(), "recipients.txt"),
-		MacIdentity:               filepath.Join(DefaultIdentityDir(), "mac.identity"),
-		RecoveryIdentity:          DefaultRecoveryIdentity(),
-		SnapshotKeep:              20,
-		CryptomatorKeychainService: "Cryptomator",
-		RuntimeDir:                DefaultRuntimeDir(),
+	return Config{
+		ConfigPath:      Expand(path),
+		Version:         CurrentVersion,
+		DataRoot:        DefaultDataRoot(),
+		StorageProvider: "google-drive",
+		StorageName:     "edrive",
+		Recipients:      DefaultRecipients(),
 	}
+}
 
-	f, err := os.Open(path)
+func Load(path string) (Config, error) {
+	cfg := Defaults(path)
+
+	f, err := os.Open(cfg.ConfigPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			cfg.ConfigFound = false
-			cfg.CryptomatorVault = filepath.Join(cfg.GoogleDriveRoot, "edrive")
 			return cfg, nil
 		}
-		return Config{}, fmt.Errorf("open config %s: %w", path, err)
+		return Config{}, fmt.Errorf("open config %s: %w", cfg.ConfigPath, err)
 	}
 	defer f.Close()
 
+	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
+		return Config{}, fmt.Errorf("decode config %s: %w", cfg.ConfigPath, err)
+	}
+	cfg.ConfigPath = Defaults(cfg.ConfigPath).ConfigPath
 	cfg.ConfigFound = true
 
-	values := map[string]string{}
-	allowed := map[string]bool{
-		"EDRIVE_DATA_ROOT":                  true,
-		"EDRIVE_HOME":                       true,
-		"EDRIVE_GOOGLE_DRIVE_ROOT":          true,
-		"EDRIVE_GOOGLE_DRIVE_READY":          true,
-		"EDRIVE_MOUNT":                      true,
-		"EDRIVE_RECOVERY_DIR":               true,
-		"EDRIVE_RECIPIENTS":                 true,
-		"EDRIVE_MAC_IDENTITY":               true,
-		"EDRIVE_RECOVERY_IDENTITY":          true,
-		"EDRIVE_SNAPSHOT_KEEP":              true,
-		"EDRIVE_CRYPTOMATOR_VAULT":          true,
-		"EDRIVE_CRYPTOMATOR_VAULT_ID":       true,
-		"EDRIVE_CRYPTOMATOR_CLI":            true,
-		"EDRIVE_CRYPTOMATOR_MOUNTER":        true,
-		"EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE": true,
-		"EDRIVE_RUNTIME_DIR":                true,
+	if cfg.Version == 0 {
+		cfg.Version = CurrentVersion
 	}
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !strings.Contains(line, "=") {
-			return Config{}, fmt.Errorf("invalid config line (expected KEY=value): %q", line)
-		}
-		parts := strings.SplitN(line, "=", 2)
-		key := strings.TrimSpace(parts[0])
-		value := unquote(strings.TrimSpace(parts[1]))
-		if !allowed[key] {
-			return Config{}, fmt.Errorf("unsupported config key %q", key)
-		}
-		values[key] = value
+	if cfg.Version != CurrentVersion {
+		return Config{}, fmt.Errorf("unsupported edrive config version: %d", cfg.Version)
 	}
-	if err := scanner.Err(); err != nil {
-		return Config{}, fmt.Errorf("read config: %w", err)
+	if cfg.DataRoot == "" {
+		cfg.DataRoot = DefaultDataRoot()
 	}
-
-	if values["EDRIVE_DATA_ROOT"] == "" {
-		values["EDRIVE_DATA_ROOT"] = values["EDRIVE_HOME"]
+	cfg.DataRoot = Expand(cfg.DataRoot)
+	if cfg.StorageProvider == "" {
+		cfg.StorageProvider = "google-drive"
 	}
-
-	if v := strings.TrimSpace(values["EDRIVE_SNAPSHOT_KEEP"]); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("invalid EDRIVE_SNAPSHOT_KEEP=%q", v)
-		}
-		cfg.SnapshotKeep = n
+	if cfg.StorageName == "" {
+		cfg.StorageName = "edrive"
 	}
-
-	if v := strings.TrimSpace(values["EDRIVE_DATA_ROOT"]); v != "" {
-		cfg.DataRoot = Expand(v)
-	}
-	if v := strings.TrimSpace(values["EDRIVE_GOOGLE_DRIVE_ROOT"]); v != "" {
-		cfg.GoogleDriveRoot = Expand(v)
+	if cfg.Recipients == "" {
+		cfg.Recipients = DefaultRecipients()
 	} else {
-		cfg.GoogleDriveRoot = filepath.Join(cfg.DataRoot, "google-drive-remote")
+		cfg.Recipients = Expand(cfg.Recipients)
 	}
-	cfg.GoogleDriveReady = strings.EqualFold(strings.TrimSpace(values["EDRIVE_GOOGLE_DRIVE_READY"]), "1") || strings.EqualFold(strings.TrimSpace(values["EDRIVE_GOOGLE_DRIVE_READY"]), "true")
-	if v := strings.TrimSpace(values["EDRIVE_MOUNT"]); v != "" {
-		cfg.Mount = Expand(v)
-	} else {
-		cfg.Mount = filepath.Join(cfg.DataRoot, "edrive")
+	if cfg.LastBackupDir != "" {
+		cfg.LastBackupDir = Expand(cfg.LastBackupDir)
 	}
-	if v := strings.TrimSpace(values["EDRIVE_RECOVERY_DIR"]); v != "" {
-		cfg.RecoveryDir = Expand(v)
-	} else {
-		cfg.RecoveryDir = filepath.Join(cfg.DataRoot, "recovery")
+	if cfg.CryptomatorCLI != "" {
+		cfg.CryptomatorCLI = Expand(cfg.CryptomatorCLI)
 	}
-	if v := strings.TrimSpace(values["EDRIVE_RECIPIENTS"]); v != "" {
-		cfg.Recipients = Expand(v)
-	}
-	if v := strings.TrimSpace(values["EDRIVE_MAC_IDENTITY"]); v != "" {
-		cfg.MacIdentity = Expand(v)
-	}
-	if v := strings.TrimSpace(values["EDRIVE_RECOVERY_IDENTITY"]); v != "" {
-		cfg.RecoveryIdentity = Expand(v)
-	}
-	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_VAULT"]); v != "" {
-		cfg.CryptomatorVault = Expand(v)
-	} else {
-		cfg.CryptomatorVault = filepath.Join(cfg.GoogleDriveRoot, "edrive")
-	}
-	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_VAULT_ID"]); v != "" {
-		cfg.CryptomatorVaultID = strings.TrimSpace(v)
-	}
-	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_CLI"]); v != "" {
-		cfg.CryptomatorCLI = Expand(v)
-	}
-	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_MOUNTER"]); v != "" {
-		cfg.CryptomatorMounter = strings.TrimSpace(v)
-	}
-	if v := strings.TrimSpace(values["EDRIVE_CRYPTOMATOR_KEYCHAIN_SERVICE"]); v != "" {
-		cfg.CryptomatorKeychainService = strings.TrimSpace(v)
-	}
-	if v := strings.TrimSpace(values["EDRIVE_RUNTIME_DIR"]); v != "" {
-		cfg.RuntimeDir = Expand(v)
-	}
-
 	return cfg, nil
 }
 
-func unquote(v string) string {
-	if len(v) >= 2 {
-		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
-			if v[0] == '"' {
-				if s, err := strconv.Unquote(v); err == nil {
-					return s
-				}
-			}
-			return v[1 : len(v)-1]
-		}
+func (c Config) Save() error {
+	if c.ConfigPath == "" {
+		return fmt.Errorf("config path is required")
 	}
-	return v
+	if err := os.MkdirAll(filepath.Dir(c.ConfigPath), 0700); err != nil {
+		return fmt.Errorf("create edrive home: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(c.ConfigPath), ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+	}
+	defer cleanup()
+
+	_ = tmp.Chmod(0600)
+	enc := json.NewEncoder(tmp)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(c); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close config: %w", err)
+	}
+	if err := os.Rename(tmpPath, c.ConfigPath); err != nil {
+		return fmt.Errorf("finalize config: %w", err)
+	}
+	return os.Chmod(c.ConfigPath, 0600)
 }
