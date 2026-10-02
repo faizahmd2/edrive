@@ -21,16 +21,19 @@ func (a App) Backup() error {
 		return err
 	}
 
-	// Access Keychain first. The first backup creates the one stable recovery
-	// key; later backups reuse it.
-	recoveryIdentity, err := ensureRecoveryIdentity(a.Config.AgePath)
+	agePath, zstdPath, err := a.BackupToolPaths()
 	if err != nil {
 		return err
 	}
-	if err := a.ensureUnlocked(); err != nil {
+
+	// Access Keychain before doing backup work. The first backup creates one
+	// stable recovery identity; later backups reuse it.
+	recoveryIdentity, err := ensureRecoveryIdentity(agePath)
+	if err != nil {
 		return err
 	}
-	if err := a.requireBackupTools(); err != nil {
+
+	if err := a.ensureUnlocked(); err != nil {
 		return err
 	}
 
@@ -50,12 +53,15 @@ func (a App) Backup() error {
 	if inside(a.Config.DataRoot, destination) {
 		return fmt.Errorf("backup destination cannot be inside the edrive workspace")
 	}
+	if !isDir(destination) {
+		return fmt.Errorf("backup destination is unavailable: %s", destination)
+	}
 
 	deviceRecipients, err := device.Recipients()
 	if err != nil {
 		return err
 	}
-	keygenPath, err := ageutil.KeygenPath(a.Config.AgePath)
+	keygenPath, err := ageutil.KeygenPath(agePath)
 	if err != nil {
 		return err
 	}
@@ -63,7 +69,6 @@ func (a App) Backup() error {
 	if err != nil {
 		return err
 	}
-
 	recipients := append(append([]string{}, deviceRecipients...), recoveryRecipient)
 
 	recoveryPath := filepath.Join(destination, recoveryFileName)
@@ -74,13 +79,12 @@ func (a App) Backup() error {
 
 	finalPath := filepath.Join(destination, timestampedBackupName())
 	partialPath := finalPath + ".partial"
-
 	out, err := os.OpenFile(partialPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("create backup file: %w", err)
 	}
 
-	if err := backup.Create(a.Config.DataRoot, recipients, a.Config.AgePath, a.Config.ZstdPath, out); err != nil {
+	if err := backup.Create(a.Config.DataRoot, recipients, agePath, zstdPath, out); err != nil {
 		_ = out.Close()
 		_ = os.Remove(partialPath)
 		return err
@@ -97,12 +101,6 @@ func (a App) Backup() error {
 	if err := os.Rename(partialPath, finalPath); err != nil {
 		_ = os.Remove(partialPath)
 		return fmt.Errorf("finalize backup: %w", err)
-	}
-
-	recoveryPath := filepath.Join(destination, recoveryFileName)
-	exported, err := ensureExportedRecoveryKey(recoveryPath, recoveryIdentity, keygenPath)
-	if err != nil {
-		return err
 	}
 
 	a.Config.LastBackupDir = destination
@@ -127,12 +125,12 @@ func ensureRecoveryIdentity(agePath string) (string, error) {
 	if keychain.RecoveryExists() {
 		value, err := keychain.GetRecovery()
 		if err != nil {
-			return "", fmt.Errorf("recovery Keychain access was not granted")
+			return "", fmt.Errorf("edrive needs access to its recovery key in the macOS Keychain")
 		}
 		return value, nil
 	}
 
-	fmt.Println("Creating your recovery key in macOS Keychain...")
+	fmt.Println("Creating your edrive recovery key in macOS Keychain...")
 	keygenPath, err := ageutil.KeygenPath(agePath)
 	if err != nil {
 		return "", err
@@ -142,7 +140,7 @@ func ensureRecoveryIdentity(agePath string) (string, error) {
 		return "", err
 	}
 	if err := keychain.SetRecovery(value); err != nil {
-		return "", err
+		return "", fmt.Errorf("store the edrive recovery key in macOS Keychain: %w", err)
 	}
 	return value, nil
 }
