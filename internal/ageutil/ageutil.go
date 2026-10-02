@@ -67,8 +67,7 @@ func Recipient(identity, keygenPath, tempDir string) (string, error) {
 		_ = f.Close()
 		return "", err
 	}
-	if _, err := f.WriteString(strings.TrimSpace(identity) + "
-"); err != nil {
+	if _, err := f.WriteString(strings.TrimSpace(identity) + "\n"); err != nil {
 		_ = f.Close()
 		return "", err
 	}
