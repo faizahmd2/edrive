@@ -34,7 +34,7 @@ func Run() error {
 	}
 
 	legacy := legacyValues()
-	seedFromLegacy(&cfg, legacy)
+	migrated := seedFromLegacy(&cfg, legacy)
 
 	if err := os.MkdirAll(config.Home(), 0700); err != nil {
 		return err
@@ -43,7 +43,7 @@ func Run() error {
 		return err
 	}
 
-	if err := chooseWorkspace(&cfg); err != nil {
+	if err := chooseWorkspace(&cfg, migrated); err != nil {
 		return err
 	}
 	if err := ensureWorkspace(cfg.DataRoot, cfg.ConfigFound); err != nil {
@@ -113,8 +113,8 @@ func Run() error {
 	return nil
 }
 
-func chooseWorkspace(cfg *config.Config) error {
-	if cfg.ConfigFound || cfg.DataRoot != config.DefaultDataRoot() {
+func chooseWorkspace(cfg *config.Config, migrated bool) error {
+	if cfg.ConfigFound || migrated || cfg.DataRoot != config.DefaultDataRoot() {
 		fmt.Println("Reusing workspace:", cfg.DataRoot)
 		return nil
 	}
@@ -267,7 +267,11 @@ func ensureDefaultDevice(ageKeygen string) error {
 		_, err = device.Import("mac-1", identity, ageKeygen)
 		return err
 	}
-	if value, err := keychain.GetLegacyIdentity("device-identity"); err == nil {
+	if keychain.LegacyIdentityExists("device-identity") {
+		value, err := keychain.GetLegacyIdentity("device-identity")
+		if err != nil {
+			return fmt.Errorf("legacy device Keychain access was not granted")
+		}
 		if err := keychain.SetIdentity("mac-1", value); err != nil {
 			return err
 		}
@@ -291,7 +295,11 @@ func migrateRecoveryKey() error {
 	if keychain.RecoveryExists() {
 		return nil
 	}
-	if value, err := keychain.GetLegacyRecovery(); err == nil {
+	if keychain.LegacyRecoveryExists() {
+		value, err := keychain.GetLegacyRecovery()
+		if err != nil {
+			return fmt.Errorf("legacy recovery Keychain access was not granted")
+		}
 		if err := keychain.SetRecovery(value); err != nil {
 			return err
 		}
@@ -312,22 +320,30 @@ func migrateRecoveryKey() error {
 	return nil
 }
 
-func seedFromLegacy(cfg *config.Config, values map[string]string) {
+func seedFromLegacy(cfg *config.Config, values map[string]string) bool {
+	migrated := false
 	if cfg.DataRoot == config.DefaultDataRoot() {
 		if value := config.Expand(values["EDRIVE_MOUNT"]); value != "" {
 			cfg.DataRoot = value
+			migrated = true
 		}
 	}
 	if cfg.CryptomatorCLI == "" {
-		cfg.CryptomatorCLI = config.Expand(values["EDRIVE_CRYPTOMATOR_CLI"])
+		if value := config.Expand(values["EDRIVE_CRYPTOMATOR_CLI"]); value != "" {
+			cfg.CryptomatorCLI = value
+			migrated = true
+		}
 	}
 	if cfg.StorageRoot == "" {
 		if value := config.Expand(values["EDRIVE_GOOGLE_DRIVE_ROOT"]); value != "" {
 			cfg.StorageRoot = value
+			migrated = true
 		} else if value := config.Expand(values["EDRIVE_CRYPTOMATOR_VAULT"]); value != "" {
 			cfg.StorageRoot = filepath.Dir(value)
+			migrated = true
 		}
 	}
+	return migrated
 }
 
 func legacyValues() map[string]string {
