@@ -26,20 +26,18 @@ func OpenApplication(name string) error {
 func ChooseFolder(prompt, defaultDir string) (string, bool, error) {
 	defaultDir = filepath.Clean(defaultDir)
 
-	script := "tell application \\"System Events\\" to activate\n"
+	var script string
 	if isDir(defaultDir) {
-		script += fmt.Sprintf(
-			"set chosenFolder to choose folder with prompt \\"%s\\" default location POSIX file \\"%s\\" \n",
-			escapeAppleScript(prompt),
-			escapeAppleScript(defaultDir),
-		)
+		script = fmt.Sprintf(`tell application "System Events" to activate
+
+set chosenFolder to choose folder with prompt "%s" default location POSIX file "%s"
+return POSIX path of chosenFolder`, escapeAppleScript(prompt), escapeAppleScript(defaultDir))
 	} else {
-		script += fmt.Sprintf(
-			"set chosenFolder to choose folder with prompt \\"%s\\" \n",
-			escapeAppleScript(prompt),
-		)
+		script = fmt.Sprintf(`tell application "System Events" to activate
+
+set chosenFolder to choose folder with prompt "%s"
+return POSIX path of chosenFolder`, escapeAppleScript(prompt))
 	}
-	script += "return POSIX path of chosenFolder"
 
 	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
 	if err != nil {
@@ -56,22 +54,23 @@ func ChooseFolder(prompt, defaultDir string) (string, bool, error) {
 }
 
 func ShellInitZsh() string {
-	return "# >>> edrive shell integration >>>\n" +
-		"edrive() {\n" +
-		"  if [[ \\"$1\\" == \\"cd\\" ]]; then\n" +
-		"    shift\n" +
-		"    if (( $# > 0 )); then\n" +
-		"      echo \\"edrive cd does not accept arguments\\" >&2\n" +
-		"      return 2\n" +
-		"    fi\n" +
-		"    local dir\n" +
-		"    dir=(\\"$HOME/.local/bin/edrive\\" cd) || return\n" +
-		"    builtin cd -- \\"$dir\\"\n" +
-		"    return\n" +
-		"  fi\n" +
-		"  \\"$HOME/.local/bin/edrive\\" \\"$@\\" \n" +
-		"}\n" +
-		"# <<< edrive shell integration <<<\n"
+	return `# >>> edrive shell integration >>>
+edrive() {
+  if [[ "$1" == "cd" ]]; then
+    shift
+    if (( $# > 0 )); then
+      echo "edrive cd does not accept arguments" >&2
+      return 2
+    fi
+    local dir
+    dir=$("$HOME/.local/bin/edrive" cd) || return
+    builtin cd -- "$dir"
+    return
+  fi
+  "$HOME/.local/bin/edrive" "$@"
+}
+# <<< edrive shell integration <<<` + "
+"
 }
 
 func Confirm(prompt string) (bool, error) {
@@ -106,5 +105,5 @@ func isDir(path string) bool {
 
 func escapeAppleScript(value string) string {
 	value = strings.ReplaceAll(value, "\\", "\\\\")
-	return strings.ReplaceAll(value, "\"", "\\\"")
+	return strings.ReplaceAll(value, `"`, `\"`)
 }
