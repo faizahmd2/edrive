@@ -24,17 +24,17 @@ const (
 
 type cryptomatorSettings struct {
 	Directories []struct {
-		ID   string json:"id"
-		Path string json:"path"
-	} json:"directories"
+		ID   string `json:"id"`
+		Path string `json:"path"`
+	} `json:"directories"`
 }
 
 type githubRelease struct {
-	TagName string json:"tag_name"
+	TagName string `json:"tag_name"`
 	Assets  []struct {
 		Name               string json:"name"
 		BrowserDownloadURL string json:"browser_download_url"
-	} json:"assets"
+	} `json:"assets"`
 }
 
 var input = bufio.NewReader(os.Stdin)
