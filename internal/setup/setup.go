@@ -1,10 +1,7 @@
 package setup
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,82 +16,55 @@ import (
 	"github.com/faiz/edrive/internal/provider"
 	"github.com/faiz/edrive/internal/toolchain"
 	"github.com/faiz/edrive/internal/ui"
+	"github.com/faiz/edrive/internal/vault"
 )
-
-var input = bufio.NewReader(os.Stdin)
 
 func Run() error {
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("setup currently supports macOS")
 	}
 
-	cfg, err := config.Load(config.DefaultPath())
-	if err != nil {
+	ok, err := confirmFreshSetup()
+	if err != nil || !ok {
 		return err
 	}
 
-	legacy := legacyValues()
-	migrated := seedFromLegacy(&cfg, legacy)
-
+	cfg := config.Defaults(config.DefaultPath())
 	if err := os.MkdirAll(config.Home(), 0700); err != nil {
-		return err
+		return fmt.Errorf("create edrive state: %w", err)
 	}
 	if err := os.MkdirAll(config.TempDir(), 0700); err != nil {
-		return err
+		return fmt.Errorf("create edrive temporary state: %w", err)
 	}
 
-	if err := chooseWorkspace(&cfg, migrated); err != nil {
-		return err
-	}
-	if err := ensureWorkspace(cfg.DataRoot, cfg.ConfigFound); err != nil {
-		return err
-	}
-	if err := cfg.Save(); err != nil {
+	if err := chooseWorkspace(&cfg); err != nil {
 		return err
 	}
 	if err := ensureDependencies(&cfg); err != nil {
 		return err
 	}
-	if err := cfg.Save(); err != nil {
-		return err
-	}
 
-	drive := provider.GoogleDrive{
-		PreferredRoot: cfg.StorageRoot,
-		StorageName:   cfg.StorageName,
-	}
-	root, err := drive.Root()
+	root, err := ensureGoogleDriveRoot()
 	if err != nil {
-		_ = provider.EnsureRunning()
-		root, err = drive.Root()
-		if err != nil {
-			return fmt.Errorf("Google Drive storage is unavailable")
-		}
+		return err
 	}
 	cfg.StorageRoot = root
-	if err := cfg.Save(); err != nil {
-		return err
-	}
 
-	vaultPath, err := drive.VaultPath(cfg.StorageName)
+	vaultPath, err := ensureVault(root)
 	if err != nil {
 		return err
 	}
-	if err := ensureVault(vaultPath); err != nil {
-		return err
+	relative, err := filepath.Rel(root, vaultPath)
+	if err != nil || relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("edrive vault must stay inside Google Drive")
 	}
-	if err := cfg.Save(); err != nil {
-		return err
-	}
+	cfg.StorageName = filepath.Clean(relative)
 
 	keygenPath, err := ageutil.KeygenPath(cfg.AgePath)
 	if err != nil {
 		return err
 	}
 	if err := ensureDefaultDevice(keygenPath); err != nil {
-		return err
-	}
-	if err := migrateRecoveryKey(); err != nil {
 		return err
 	}
 
@@ -104,7 +74,7 @@ func Run() error {
 
 	fmt.Println()
 	fmt.Println("Setup complete.")
-	fmt.Println("Workspace:", cfg.DataRoot)
+	fmt.Println("Working folder:", cfg.DataRoot)
 	fmt.Println()
 	fmt.Println("Use:")
 	fmt.Println("  edrive open")
@@ -113,142 +83,371 @@ func Run() error {
 	return nil
 }
 
-func chooseWorkspace(cfg *config.Config, migrated bool) error {
-	if cfg.ConfigFound || migrated || cfg.DataRoot != config.DefaultDataRoot() {
-		fmt.Println("Reusing workspace:", cfg.DataRoot)
-		return nil
+func confirmFreshSetup() (bool, error) {
+	if _, err := os.Stat(config.DefaultPath()); err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
 	}
 
-	answer, err := askPath("Where should edrive keep the working folder? ["+cfg.DataRoot+"]: ", cfg.DataRoot)
-	if err != nil {
-		return err
+	old, err := config.Load(config.DefaultPath())
+	if err == nil && old.DataRoot != "" && mounted(old.DataRoot) {
+		fmt.Println("The current edrive workspace is still mounted.")
+		fmt.Println("Please lock it in Cryptomator before starting a fresh setup.")
+		fmt.Println()
+		return false, nil
 	}
-	cfg.DataRoot = answer
-	return nil
+
+	fmt.Println("An edrive configuration already exists.")
+	fmt.Println("Fresh setup will rebuild edrive from the beginning.")
+	fmt.Println("It will not delete your Google Drive files, Cryptomator vaults, or Keychain identities.")
+	fmt.Println("Run 'edrive doctor' first when you want to inspect the current installation.")
+	fmt.Println()
+
+	ok, err := ui.Confirm("Continue with fresh setup?")
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		fmt.Println("Setup cancelled.")
+		return false, nil
+	}
+
+	if err := os.Remove(config.DefaultPath()); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("remove old edrive configuration: %w", err)
+	}
+	if err := os.Remove(config.DevicesPath()); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("remove old device registry: %w", err)
+	}
+	return true, nil
 }
 
-func ensureWorkspace(path string, existingConfig bool) error {
-	if err := os.MkdirAll(path, 0700); err != nil {
-		return fmt.Errorf("create workspace: %w", err)
-	}
-	if mounted(path) {
-		return nil
-	}
-	if existingConfig {
-		return nil
-	}
+func chooseWorkspace(cfg *config.Config) error {
+	defaultDir := config.DefaultDataRoot()
+	_ = os.MkdirAll(defaultDir, 0700)
 
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return err
+	for {
+		fmt.Println()
+		fmt.Println("Step 1/4: choose the folder where you will see your decrypted edrive files.")
+		fmt.Println("Choose an empty folder. edrive will mount the workspace there.")
+		path, selected, err := ui.ChooseFolder("Choose edrive working folder", defaultDir)
+		if err != nil {
+			return err
+		}
+		if !selected {
+			fmt.Println("Setup cancelled.")
+			return nil
+		}
+		if mounted(path) {
+			cfg.DataRoot = filepath.Clean(path)
+			return nil
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			fmt.Println("I could not inspect that folder. Choose another one.")
+			continue
+		}
+		if len(entries) != 0 {
+			fmt.Println("That folder is not empty. Choose an empty folder.")
+			continue
+		}
+		cfg.DataRoot = filepath.Clean(path)
+		return nil
 	}
-	if len(entries) != 0 {
-		return fmt.Errorf("workspace must be empty before first setup: %s", path)
-	}
-	return nil
 }
 
 func ensureDependencies(cfg *config.Config) error {
-	agePath, err := ensureAge()
-	if err != nil {
-		return err
-	}
-	zstdPath, err := ensureExactTool("zstd", toolchain.ZstdVersion)
-	if err != nil {
-		return err
-	}
-	cliPath, err := findCryptomatorCLI(cfg)
-	if err != nil {
-		return err
-	}
+	var missing []string
 
-	cfg.AgePath = agePath
-	cfg.ZstdPath = zstdPath
-	cfg.CryptomatorCLI = cliPath
-
+	if path, err := ensureAge(); err == nil {
+		cfg.AgePath = path
+	} else {
+		missing = append(missing, "age 1.3.2")
+	}
+	if path, err := ensureExactTool("zstd", toolchain.ZstdVersion); err == nil {
+		cfg.ZstdPath = path
+	} else {
+		missing = append(missing, "zstd 1.5.7")
+	}
+	if path, err := findCryptomatorCLI(); err == nil {
+		cfg.CryptomatorCLI = path
+	} else {
+		missing = append(missing, "Cryptomator CLI 0.6.2")
+	}
 	if !isDir("/Applications/Google Drive.app") {
-		return fmt.Errorf("Google Drive for desktop is required")
+		missing = append(missing, "Google Drive for desktop")
 	}
 	if !brewCaskInstalled("fuse-t") {
-		return fmt.Errorf("FUSE-T is required")
+		missing = append(missing, "FUSE-T")
 	}
 	if !isDir("/Applications/Cryptomator.app") {
-		return fmt.Errorf("Cryptomator is required")
+		missing = append(missing, "Cryptomator")
 	}
-	return nil
+
+	if len(missing) == 0 {
+		fmt.Println()
+		fmt.Println("Required components: ready.")
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Println("Setup is paused. These required components are missing or incorrect:")
+	for _, item := range missing {
+		fmt.Println("  -", item)
+	}
+	fmt.Println()
+	fmt.Println("Restore or install them, then run 'edrive setup' again.")
+	return fmt.Errorf("required components are not ready")
 }
 
-func ensureAge() (string, error) {
-	if path, err := exec.LookPath("age"); err == nil && toolVersionMatches(path, toolchain.AgeVersion) {
-		return path, nil
-	}
-
-	path := filepath.Join(config.ToolsDir(), "age", toolchain.AgeVersion, "age")
-	if isExecutable(path) && toolVersionMatches(path, toolchain.AgeVersion) {
-		return path, nil
-	}
-
-	return "", fmt.Errorf("age %s is required; install that exact version and run setup again", toolchain.AgeVersion)
-}
-
-func ensureExactTool(name, version string) (string, error) {
-	path, err := exec.LookPath(name)
+func ensureGoogleDriveRoot() (string, error) {
+	drive := provider.GoogleDrive{StorageName: "edrive"}
+	candidates, err := drive.Candidates()
 	if err != nil {
-		return "", fmt.Errorf("%s %s is required; install that exact version and run setup again", name, version)
+		return "", err
 	}
-	if !toolVersionMatches(path, version) {
-		return "", fmt.Errorf("%s version mismatch: edrive requires %s", name, version)
+	if len(candidates) == 1 {
+		fmt.Println()
+		fmt.Println("Google Drive local My Drive found:")
+		fmt.Println(" ", candidates[0])
+		return candidates[0], nil
+	}
+	if len(candidates) > 1 {
+		fmt.Println()
+		fmt.Println("I found more than one local Google Drive My Drive.")
+		for _, candidate := range candidates {
+			fmt.Println(" ", candidate)
+		}
+		path, selected, err := ui.ChooseFolder("Choose the Google Drive My Drive folder edrive should use", candidates[0])
+		if err != nil {
+			return "", err
+		}
+		if !selected {
+			fmt.Println("Setup cancelled.")
+			return "", errCancelled
+		}
+		path = provider.NormalizeRoot(path)
+		if !isDir(path) {
+			return "", fmt.Errorf("the selected Google Drive folder is unavailable")
+		}
+		return path, nil
+	}
+
+	fmt.Println()
+	fmt.Println("Google Drive is installed, but its local My Drive folder is not visible.")
+	fmt.Println("The next step will open Google Drive.")
+	fmt.Println("Make your My Drive files available locally. Mirroring is fine; streaming is also fine.")
+	fmt.Println("Do not move or rename any existing edrive data.")
+	fmt.Println()
+	if err := provider.EnsureRunning(); err != nil {
+		return "", fmt.Errorf("open Google Drive: %w", err)
+	}
+	if err := ui.Pause("Press Enter after Google Drive is ready: "); err != nil {
+		return "", err
+	}
+
+	candidates, err = drive.Candidates()
+	if err != nil {
+		return "", err
+	}
+	if len(candidates) == 1 {
+		fmt.Println("Google Drive local My Drive found:", candidates[0])
+		return candidates[0], nil
+	}
+	if len(candidates) > 1 {
+		fmt.Println("Multiple local Google Drive locations are available. Please choose one.")
+		path, selected, err := ui.ChooseFolder("Choose the Google Drive My Drive folder edrive should use", candidates[0])
+		if err != nil {
+			return "", err
+		}
+		if !selected {
+			fmt.Println("Setup cancelled.")
+			return "", errCancelled
+		}
+		path = provider.NormalizeRoot(path)
+		if !isDir(path) {
+			return "", fmt.Errorf("the selected Google Drive folder is unavailable")
+		}
+		return path, nil
+	}
+
+	fmt.Println()
+	fmt.Println("Google Drive still did not expose a local My Drive folder.")
+	fmt.Println("I will let you choose the local My Drive folder directly.")
+	path, selected, err := ui.ChooseFolder("Select your Google Drive My Drive folder", config.Home())
+	if err != nil {
+		return "", err
+	}
+	if !selected {
+		fmt.Println("Setup cancelled.")
+		return "", errCancelled
+	}
+	path = provider.NormalizeRoot(path)
+	if !isDir(path) {
+		return "", fmt.Errorf("the selected Google Drive folder is unavailable")
 	}
 	return path, nil
 }
 
-func findCryptomatorCLI(cfg *config.Config) (string, error) {
-	candidates := []string{}
-	if cfg.CryptomatorCLI != "" {
-		candidates = append(candidates, cfg.CryptomatorCLI)
-	}
-	home, _ := os.UserHomeDir()
-	candidates = append(candidates,
-		filepath.Join(config.ToolsDir(), "cryptomator-cli", toolchain.CryptomatorCLIVersion, "cryptomator-cli.app", "Contents", "MacOS", "cryptomator-cli"),
-		"/Applications/cryptomator-cli.app/Contents/MacOS/cryptomator-cli",
-		filepath.Join(home, "Desktop/local-infra/tools/cryptomator-cli.app/Contents/MacOS/cryptomator-cli"),
-	)
-	for _, path := range unique(candidates) {
-		if isExecutable(path) && toolVersionMatches(path, toolchain.CryptomatorCLIVersion) {
-			return path, nil
+func ensureVault(root string) (string, error) {
+	candidate := filepath.Join(root, "edrive")
+
+	for {
+		state, err := vault.Inspect(candidate)
+		if err != nil {
+			return "", err
 		}
+
+		if state.Managed {
+			if !state.Complete {
+				fmt.Println("edrive's own vault marker exists, but the vault is incomplete.")
+				return chooseVaultParent(root)
+			}
+			return ensureRegistered(candidate)
+		}
+
+		if state.HasCryptomatorFiles {
+			if !state.Complete {
+				fmt.Println("An incomplete Cryptomator vault is at:")
+				fmt.Println(" ", candidate)
+				fmt.Println("edrive will not touch or repair it.")
+				return chooseVaultParent(root)
+			}
+
+			fmt.Println()
+			fmt.Println("A Cryptomator vault already exists at:")
+			fmt.Println(" ", candidate)
+			fmt.Println("It may belong to another application or another vault setup.")
+			use, err := ui.Confirm("Is this the edrive vault you want to use?")
+			if err != nil {
+				return "", err
+			}
+			if use {
+				if err := ensureRegistered(candidate); err != nil {
+					return "", err
+				}
+				if err := vault.MarkManaged(candidate); err != nil {
+					return "", err
+				}
+				return candidate, nil
+			}
+			return chooseVaultParent(root)
+		}
+
+		if !state.Empty {
+			fmt.Println()
+			fmt.Println("The default edrive vault folder already contains other files:")
+			fmt.Println(" ", candidate)
+			fmt.Println("edrive will not use or modify it.")
+			return chooseVaultParent(root)
+		}
+
+		if err := createNewVault(candidate); err != nil {
+			return "", err
+		}
+		if err := vault.MarkManaged(candidate); err != nil {
+			return "", err
+		}
+		return candidate, nil
 	}
-	return "", fmt.Errorf("Cryptomator CLI %s is required; install the pinned CLI and run setup again", toolchain.CryptomatorCLIVersion)
 }
 
-func ensureVault(vaultPath string) error {
-	marker := filepath.Join(vaultPath, "vault.cryptomator")
-	if isFile(marker) {
-		if _, err := cryptomator.DiscoverVaultID(vaultPath); err == nil {
-			return nil
+func chooseVaultParent(root string) (string, error) {
+	for {
+		fmt.Println()
+		fmt.Println("Choose a different folder inside Google Drive.")
+		fmt.Println("edrive will create its own 'edrive' vault folder inside that folder.")
+		parent, selected, err := ui.ChooseFolder("Choose an edrive vault parent folder", root)
+		if err != nil {
+			return "", err
 		}
-	}
+		if !selected {
+			fmt.Println("Setup cancelled.")
+			return "", errCancelled
+		}
+		parent = filepath.Clean(parent)
+		rel, err := filepath.Rel(root, parent)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			fmt.Println("Please choose a folder inside Google Drive.")
+			continue
+		}
 
-	if err := os.MkdirAll(vaultPath, 0700); err != nil {
-		return fmt.Errorf("create encrypted storage folder: %w", err)
+		candidate := filepath.Join(parent, "edrive")
+		state, err := vault.Inspect(candidate)
+		if err != nil {
+			return "", err
+		}
+		if state.Exists {
+			fmt.Println("That location already uses an 'edrive' folder. Choose another parent.")
+			continue
+		}
+		if err := createNewVault(candidate); err != nil {
+			return "", err
+		}
+		if err := vault.MarkManaged(candidate); err != nil {
+			return "", err
+		}
+		return candidate, nil
 	}
+}
 
-	_ = ui.OpenApplication("Cryptomator")
+func createNewVault(vaultPath string) error {
+	name := filepath.Base(vaultPath)
+	parent := filepath.Dir(vaultPath)
+
 	fmt.Println()
-	fmt.Println("Cryptomator needs this one-time action:")
-	fmt.Println("create or add the edrive vault using this folder:")
-	fmt.Println(vaultPath)
+	fmt.Println("Step 4/4: create the edrive encrypted vault.")
+	fmt.Println("Before I open Cryptomator, do this:")
 	fmt.Println()
-	fmt.Print("Press Enter after the vault is ready: ")
-	if _, err := input.ReadString('\n'); err != nil && err != io.EOF {
+	fmt.Println("  1. Choose Add -> Create New Vault.")
+	fmt.Println("  2. Vault name:", name)
+	fmt.Println("  3. Storage location:", parent)
+	fmt.Println("  4. Finish the vault creation.")
+	fmt.Println()
+	fmt.Println("The resulting vault must be:")
+	fmt.Println(" ", vaultPath)
+	fmt.Println("Do not select an unrelated existing vault.")
+	fmt.Println()
+
+	if err := ui.OpenApplication("Cryptomator"); err != nil {
+		return fmt.Errorf("open Cryptomator: %w", err)
+	}
+	if err := ui.Pause("Press Enter after the new vault is created and visible in Cryptomator: "); err != nil {
 		return err
 	}
+	state, err := vault.Inspect(vaultPath)
+	if err != nil {
+		return err
+	}
+	if !state.Complete {
+		return fmt.Errorf("the new Cryptomator vault was not found at %s; nothing was modified by edrive", vaultPath)
+	}
+	return ensureRegistered(vaultPath)
+}
 
-	if !isFile(marker) {
-		return fmt.Errorf("edrive vault was not created")
+func ensureRegistered(vaultPath string) error {
+	if _, err := cryptomator.DiscoverVaultID(vaultPath); err == nil {
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Println("The vault exists, but Cryptomator has not registered it on this Mac.")
+	fmt.Println("Before I open Cryptomator, do this:")
+	fmt.Println()
+	fmt.Println("  1. Choose Add -> Open Existing Vault.")
+	fmt.Println("  2. Select vault.cryptomator inside:")
+	fmt.Println("    ", vaultPath)
+	fmt.Println("  3. Finish adding the vault.")
+	fmt.Println()
+	if err := ui.OpenApplication("Cryptomator"); err != nil {
+		return fmt.Errorf("open Cryptomator: %w", err)
+	}
+	if err := ui.Pause("Press Enter after the vault appears in Cryptomator: "); err != nil {
+		return err
 	}
 	if _, err := cryptomator.DiscoverVaultID(vaultPath); err != nil {
-		return fmt.Errorf("edrive vault is not registered with Cryptomator")
+		return fmt.Errorf("Cryptomator still has not registered this vault; add it in Cryptomator at %s and retry setup", vaultPath)
 	}
 	return nil
 }
@@ -266,139 +465,62 @@ func ensureDefaultDevice(ageKeygen string) error {
 	if keychain.IdentityExists("mac-1") {
 		identity, err := keychain.GetIdentity("mac-1")
 		if err != nil {
-			return fmt.Errorf("device Keychain access was not granted")
+			return fmt.Errorf("edrive needs access to its existing mac-1 device identity")
 		}
 		_, err = device.Import("mac-1", identity, ageKeygen)
 		return err
 	}
-	if keychain.LegacyIdentityExists("device-identity") {
-		value, err := keychain.GetLegacyIdentity("device-identity")
-		if err != nil {
-			return fmt.Errorf("legacy device Keychain access was not granted")
-		}
-		if err := keychain.SetIdentity("mac-1", value); err != nil {
-			return err
-		}
-		_ = keychain.DeleteLegacyIdentity("device-identity")
-		_, err = device.Import("mac-1", value, ageKeygen)
-		return err
-	}
-
-	home, _ := os.UserHomeDir()
-	legacyPath := filepath.Join(home, "Library/Application Support/edrive/identities/mac.identity")
-	if b, err := os.ReadFile(legacyPath); err == nil && strings.TrimSpace(string(b)) != "" {
-		_, err = device.Import("mac-1", string(b), ageKeygen)
-		return err
-	}
-
 	_, err = device.AddGenerated("mac-1", ageKeygen)
 	return err
 }
 
-func migrateRecoveryKey() error {
-	if keychain.RecoveryExists() {
-		return nil
+var errCancelled = fmt.Errorf("setup cancelled")
+func ensureAge() (string, error) {
+	if path, err := exec.LookPath("age"); err == nil && toolVersionMatches(path, toolchain.AgeVersion) {
+		return path, nil
 	}
-	if keychain.LegacyRecoveryExists() {
-		value, err := keychain.GetLegacyRecovery()
-		if err != nil {
-			return fmt.Errorf("legacy recovery Keychain access was not granted")
-		}
-		if err := keychain.SetRecovery(value); err != nil {
-			return err
-		}
-		_ = keychain.DeleteLegacyRecovery()
-		return nil
+	path := filepath.Join(config.ToolsDir(), "age", toolchain.AgeVersion, "age")
+	if isExecutable(path) && toolVersionMatches(path, toolchain.AgeVersion) {
+		return path, nil
 	}
+	return "", fmt.Errorf("age %s is required", toolchain.AgeVersion)
+}
 
+func ensureExactTool(name, version string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil || !toolVersionMatches(path, version) {
+		return "", fmt.Errorf("%s %s is required", name, version)
+	}
+	return path, nil
+}
+
+func findCryptomatorCLI() (string, error) {
 	home, _ := os.UserHomeDir()
-	paths := []string{
-		filepath.Join(home, "Desktop/local-infra/configs/edrive/edrive-recovery-identity.txt"),
-		filepath.Join(home, "Desktop/local-infra/edrive/edrive-recovery-identity.txt"),
+	candidates := []string{
+		filepath.Join(config.ToolsDir(), "cryptomator-cli", toolchain.CryptomatorCLIVersion, "cryptomator-cli.app", "Contents", "MacOS", "cryptomator-cli"),
+		"/Applications/cryptomator-cli.app/Contents/MacOS/cryptomator-cli",
+		filepath.Join(home, "Desktop/local-infra/tools/cryptomator-cli.app/Contents/MacOS/cryptomator-cli"),
 	}
-	for _, path := range paths {
-		if b, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(b)) != "" {
-			return keychain.SetRecovery(string(b))
+	if path, err := exec.LookPath("cryptomator-cli"); err == nil {
+		candidates = append(candidates, path)
+	}
+	for _, path := range unique(candidates) {
+		if isExecutable(path) && toolVersionMatches(path, toolchain.CryptomatorCLIVersion) {
+			return path, nil
 		}
 	}
-	return nil
-}
-
-func seedFromLegacy(cfg *config.Config, values map[string]string) bool {
-	migrated := false
-	if cfg.DataRoot == config.DefaultDataRoot() {
-		if value := config.Expand(values["EDRIVE_MOUNT"]); value != "" {
-			cfg.DataRoot = value
-			migrated = true
-		}
-	}
-	if cfg.CryptomatorCLI == "" {
-		if value := config.Expand(values["EDRIVE_CRYPTOMATOR_CLI"]); value != "" {
-			cfg.CryptomatorCLI = value
-			migrated = true
-		}
-	}
-	if cfg.StorageRoot == "" {
-		if value := config.Expand(values["EDRIVE_GOOGLE_DRIVE_ROOT"]); value != "" {
-			cfg.StorageRoot = value
-			migrated = true
-		} else if value := config.Expand(values["EDRIVE_CRYPTOMATOR_VAULT"]); value != "" {
-			cfg.StorageRoot = filepath.Dir(value)
-			migrated = true
-		}
-	}
-	return migrated
-}
-
-func legacyValues() map[string]string {
-	values := make(map[string]string)
-	home, _ := os.UserHomeDir()
-	paths := []string{
-		filepath.Join(home, "Library/Application Support/edrive/config.sh"),
-		filepath.Join(home, "Desktop/local-infra/edrive/config.sh"),
-		filepath.Join(home, "Desktop/local-infra/configs/edrive/config.sh"),
-	}
-	for _, path := range paths {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(b), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
-				continue
-			}
-			parts := strings.SplitN(line, "=", 2)
-			key := strings.TrimSpace(parts[0])
-			value := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
-			values[key] = os.ExpandEnv(value)
-		}
-	}
-	return values
-}
-
-func askPath(prompt, fallback string) (string, error) {
-	fmt.Print(prompt)
-	line, err := input.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", err
-	}
-	answer := strings.TrimSpace(line)
-	if answer == "" {
-		answer = fallback
-	}
-	if answer == "" {
-		return "", fmt.Errorf("path is required")
-	}
-	return config.Expand(answer), nil
+	return "", fmt.Errorf("Cryptomator CLI %s is required", toolchain.CryptomatorCLIVersion)
 }
 
 func mounted(path string) bool {
+	if path == "" {
+		return false
+	}
 	out, err := exec.Command("/sbin/mount").Output()
 	if err != nil {
 		return false
 	}
-	return bytes.Contains(out, []byte(" on "+filepath.Clean(path)+" ("))
+	return strings.Contains(string(out), " on "+filepath.Clean(path)+" (")
 }
 
 func brewCaskInstalled(name string) bool {
@@ -407,7 +529,7 @@ func brewCaskInstalled(name string) bool {
 
 func toolVersionMatches(path, version string) bool {
 	out, err := exec.Command(path, "--version").CombinedOutput()
-	return err == nil && bytes.Contains(out, []byte(version))
+	return err == nil && strings.Contains(string(out), version)
 }
 
 func isDir(path string) bool {
@@ -417,7 +539,7 @@ func isDir(path string) bool {
 
 func isFile(path string) bool {
 	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	return err == nil && info.Mode().IsRegular()
 }
 
 func isExecutable(path string) bool {
