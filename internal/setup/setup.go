@@ -101,14 +101,6 @@ func confirmFreshSetup() (bool, error) {
 		return false, err
 	}
 
-	old, err := config.Load(config.DefaultPath())
-	if err == nil && old.DataRoot != "" && mounted(old.DataRoot) {
-		fmt.Println("The current edrive workspace is still mounted.")
-		fmt.Println("Please lock it in Cryptomator before starting a fresh setup.")
-		fmt.Println()
-		return false, nil
-	}
-
 	fmt.Println("An edrive configuration already exists.")
 	fmt.Println("Fresh setup will rebuild edrive from the beginning.")
 	fmt.Println("It will not delete your Google Drive files, Cryptomator vaults, or Keychain identities.")
@@ -124,6 +116,15 @@ func confirmFreshSetup() (bool, error) {
 		return false, nil
 	}
 
+	old, loadErr := config.Load(config.DefaultPath())
+	if loadErr == nil && old.DataRoot != "" && mounted(old.DataRoot) {
+		fmt.Println()
+		fmt.Println("The current edrive workspace is still mounted.")
+		fmt.Println("Lock it in Cryptomator, then run 'edrive setup' again.")
+		fmt.Println("The existing configuration was left unchanged.")
+		return false, nil
+	}
+
 	if err := os.Remove(config.DefaultPath()); err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("remove old edrive configuration: %w", err)
 	}
@@ -132,7 +133,6 @@ func confirmFreshSetup() (bool, error) {
 	}
 	return true, nil
 }
-
 func chooseWorkspace(cfg *config.Config) (bool, error) {
 	defaultDir := config.DefaultDataRoot()
 	_ = os.MkdirAll(defaultDir, 0700)
