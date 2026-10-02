@@ -167,6 +167,14 @@ func Ensure(label, ageKeygen string) (Record, error) {
 			return d, nil
 		}
 	}
+
+	if keychain.IdentityExists(label) {
+		identity, err := keychain.GetIdentity(label)
+		if err != nil {
+			return Record{}, fmt.Errorf("device Keychain access was not granted")
+		}
+		return Import(label, identity, ageKeygen)
+	}
 	return AddGenerated(label, ageKeygen)
 }
 
