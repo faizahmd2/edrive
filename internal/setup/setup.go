@@ -296,18 +296,18 @@ func ensureFormula(name string) error {
 }
 
 func ensureCask(name string, appPaths []string) error {
-	if err := exec.Command("brew", "list", "--cask", name).Run(); err == nil {
-		fmt.Printf("✓ %s
-", name)
+	if len(appPaths) > 0 {
+		for _, appPath := range appPaths {
+			if isDir(appPath) {
+				fmt.Printf("✓ %s (%s)\n", name, appPath)
+				return nil
+			}
+		}
+	} else if err := exec.Command("brew", "list", "--cask", name).Run(); err == nil {
+		fmt.Printf("✓ %s\n", name)
 		return nil
 	}
-	for _, appPath := range appPaths {
-		if isDir(appPath) {
-			fmt.Printf("✓ %s (%s)
-", name, appPath)
-			return nil
-		}
-	}
+
 	ok, err := askYesNo(fmt.Sprintf("%s is not installed. Install it with Homebrew? [y/N] ", name), false)
 	if err != nil {
 		return err
@@ -315,16 +315,17 @@ func ensureCask(name string, appPaths []string) error {
 	if !ok {
 		return fmt.Errorf("%s is required. Install it, then run edrive setup again", name)
 	}
+
 	cmd := exec.Command("brew", "install", "--cask", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("install %s: %w", name, err)
 	}
-	fmt.Printf("✓ %s
-", name)
+	fmt.Printf("✓ %s\n", name)
 	return nil
 }
+
 
 func ensureMacIdentity(cfg *config.Config) error {
 	if isReadableIdentity(cfg.MacIdentity) {
