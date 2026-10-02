@@ -30,7 +30,7 @@ plaintext files
 
 There is no Google Drive Desktop dependency and no local Google Drive mirror.
 
-The same Cryptomator vault can also be opened from the Cryptomator mobile apps. Current Cryptomator documentation lists Google Drive as a native cloud service on Android and iOS and documents adding an existing vault directly. citeturn337950search0turn337950search2
+The same Cryptomator vault can also be opened from the Cryptomator mobile apps. Current Cryptomator documentation lists Google Drive as a native cloud service on Android and iOS and documents adding an existing vault directly.
 
 rclone's normal crypt backend is deliberately not used. It creates an rclone-specific encrypted format, not a Cryptomator vault. The cloud copy therefore remains a normal Cryptomator vault that Cryptomator mobile can understand.
 
@@ -98,7 +98,7 @@ Cryptomator
 Cryptomator CLI 0.6.2
 ~~~
 
-When the rclone remote named edrive-cloud does not exist, setup starts rclone config inside the setup flow. Create the remote with that exact name. For Google Drive, choose Google Drive and complete the browser authentication. rclone's official Drive setup is browser based through rclone config. citeturn337950search6turn337950search9
+When the rclone remote named edrive-cloud does not exist, setup starts rclone config inside the setup flow. Create the remote with that exact name. For Google Drive, choose Google Drive and complete the browser authentication. rclone's official Drive setup is browser based through rclone config.
 
 After login, setup uses the fixed remote path:
 
@@ -118,7 +118,7 @@ That is the only normal GUI operation required for vault creation/registration. 
 
 There are no Google Drive Desktop checks and no folder-selection dialogs.
 
-Cryptomator itself is not a sync tool. Its desktop documentation expects the encrypted vault to be synchronized by another cloud-sync tool. edrive uses rclone for exactly that role. citeturn337950search5
+Cryptomator itself is not a sync tool. Its desktop documentation expects the encrypted vault to be synchronized by another cloud-sync tool. edrive uses rclone for exactly that role.
 
 ## Mac workflow
 
@@ -164,7 +164,7 @@ This is intentional manual synchronization. There is no background sync process.
 
 The phone does not need edrive.
 
-For Google Drive, connect the Google Drive account in Cryptomator Mobile and add the existing edrive vault. Cryptomator documents direct Google Drive access and adding an existing vault on mobile. citeturn337950search0turn337950search2
+For Google Drive, connect the Google Drive account in Cryptomator Mobile and add the existing edrive vault. Cryptomator documents direct Google Drive access and adding an existing vault on mobile.
 
 A typical monthly phone session is:
 
@@ -294,7 +294,7 @@ or an appropriate Linux package with its declared dependencies.
 
 The current source implementation is end-to-end for macOS. Linux packaging/support should be added only when the Linux Keychain, FUSE, Cryptomator CLI packaging, and service-management pieces are implemented together.
 
-Cryptomator CLI itself is distributed separately from the desktop application and uses a third-party filesystem integration such as FUSE-T on macOS. The pinned CLI version in edrive is 0.6.2. citeturn624796search1turn624796search0
+Cryptomator CLI itself is distributed separately from the desktop application and uses a third-party filesystem integration such as FUSE-T on macOS. The pinned CLI version in edrive is 0.6.2.
 
 ## Design constraints
 
