@@ -6,15 +6,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 type Provider interface {
 	Name() string
 	Root() (string, error)
+	VaultPath(name string) (string, error)
 }
 
 type GoogleDrive struct {
-	StorageName string
+	PreferredRoot string
+	StorageName  string
 }
 
 func (p GoogleDrive) Name() string {
@@ -22,20 +25,19 @@ func (p GoogleDrive) Name() string {
 }
 
 func (p GoogleDrive) Root() (string, error) {
+	if root := filepath.Clean(p.PreferredRoot); root != "." && isDir(root) {
+		return root, nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 
-	var candidates []string
+	candidates := make([]string, 0, 8)
 
-	legacy := filepath.Join(home, "Google Drive", "My Drive")
-	if isDir(legacy) {
-		candidates = append(candidates, legacy)
-	}
-
-	mirrored := filepath.Join(home, "Library", "CloudStorage")
-	matches, err := filepath.Glob(filepath.Join(mirrored, "GoogleDrive-*", "My Drive"))
+	// Modern Google Drive File Provider locations.
+	matches, err := filepath.Glob(filepath.Join(home, "Library", "CloudStorage", "GoogleDrive-*", "My Drive"))
 	if err != nil {
 		return "", fmt.Errorf("find Google Drive storage: %w", err)
 	}
@@ -43,6 +45,30 @@ func (p GoogleDrive) Root() (string, error) {
 		if isDir(match) {
 			candidates = append(candidates, match)
 		}
+	}
+
+	// Legacy streaming location.
+	legacy := filepath.Join("/Volumes", "GoogleDrive", "My Drive")
+	if isDir(legacy) {
+		candidates = append(candidates, legacy)
+	}
+
+	// A user/admin configured legacy streaming mount point.
+	if mount := googleDriveMountPoint(); mount != "" {
+		for _, candidate := range []string{
+			mount,
+			filepath.Join(mount, "My Drive"),
+		} {
+			if isDir(candidate) {
+				candidates = append(candidates, candidate)
+			}
+		}
+	}
+
+	// Very old local mirror layout.
+	legacyMirror := filepath.Join(home, "Google Drive", "My Drive")
+	if isDir(legacyMirror) {
+		candidates = append(candidates, legacyMirror)
 	}
 
 	sort.Strings(candidates)
@@ -60,38 +86,43 @@ func (p GoogleDrive) Root() (string, error) {
 		name = "edrive"
 	}
 
-	var existing []string
+	var matching []string
 	for _, root := range candidates {
-		vault := filepath.Join(root, name, "vault.cryptomator")
-		if isFile(vault) {
-			existing = append(existing, root)
+		if isFile(filepath.Join(root, name, "vault.cryptomator")) {
+			matching = append(matching, root)
 		}
 	}
-	if len(existing) == 1 {
-		return existing[0], nil
+	if len(matching) == 1 {
+		return matching[0], nil
 	}
 
-	return "", fmt.Errorf("multiple Google Drive local storage locations found; edrive cannot choose safely")
+	return "", fmt.Errorf("multiple Google Drive storage locations found; edrive cannot choose safely")
 }
 
-func (p GoogleDrive) VaultPath() (string, error) {
+func (p GoogleDrive) VaultPath(name string) (string, error) {
 	root, err := p.Root()
 	if err != nil {
 		return "", err
 	}
-	name := p.StorageName
-	if name == "" {
+	if strings.TrimSpace(name) == "" {
+		name = p.StorageName
+	}
+	if strings.TrimSpace(name) == "" {
 		name = "edrive"
 	}
 	return filepath.Join(root, name), nil
 }
 
 func EnsureRunning() error {
-	if _, err := exec.LookPath("open"); err != nil {
-		return fmt.Errorf("macOS open command is unavailable")
+	return exec.Command("/usr/bin/open", "-a", "Google Drive").Run()
+}
+
+func googleDriveMountPoint() string {
+	out, err := exec.Command("/usr/bin/defaults", "read", "com.google.drivefs.settings", "DefaultMountPoint").Output()
+	if err != nil {
+		return ""
 	}
-	_ = exec.Command("open", "-a", "Google Drive").Run()
-	return nil
+	return strings.TrimSpace(string(out))
 }
 
 func isDir(path string) bool {
@@ -105,10 +136,13 @@ func isFile(path string) bool {
 }
 
 func unique(paths []string) []string {
-	out := paths[:0]
+	out := make([]string, 0, len(paths))
 	seen := make(map[string]struct{}, len(paths))
 	for _, path := range paths {
 		clean := filepath.Clean(path)
+		if clean == "." {
+			continue
+		}
 		if _, ok := seen[clean]; ok {
 			continue
 		}
