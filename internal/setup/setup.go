@@ -377,8 +377,7 @@ func ensureVault(vaultPath string) error {
 		fmt.Println("The encrypted workspace exists but is not registered yet.")
 		fmt.Println("Cryptomator will open so it can be added.")
 		fmt.Print("Press Enter after the workspace has been added to Cryptomator: ")
-		if _, err := input.ReadString('
-'); err != nil && err != io.EOF {
+		if _, err := input.ReadString('\\n'); err != nil && err != io.EOF {
 			return err
 		}
 		if _, err := cryptomator.DiscoverVaultID(vaultPath); err == nil {
@@ -407,8 +406,7 @@ func ensureVault(vaultPath string) error {
 	fmt.Println("Creating the encrypted workspace...")
 	fmt.Println("Use the edrive folder inside your Google Drive storage.")
 	fmt.Print("Press Enter after the encrypted workspace has been created: ")
-	if _, err := input.ReadString('
-'); err != nil && err != io.EOF {
+	if _, err := input.ReadString('\\n'); err != nil && err != io.EOF {
 		return err
 	}
 
@@ -799,8 +797,7 @@ func unique(paths []string) []string {
 
 func askPath(prompt, defaultValue string) (string, error) {
 	fmt.Print(prompt)
-	line, err := input.ReadString('
-')
+	line, err := input.ReadString('\\n')
 	if err != nil && err != io.EOF {
 		return "", err
 	}
@@ -816,8 +813,7 @@ func askPath(prompt, defaultValue string) (string, error) {
 
 func askYesNo(prompt string, defaultYes bool) (bool, error) {
 	fmt.Print(prompt)
-	line, err := input.ReadString('
-')
+	line, err := input.ReadString('\\n')
 	if err != nil && err != io.EOF {
 		return false, err
 	}
@@ -864,8 +860,7 @@ func Purge() error {
 	fmt.Println("WARNING: purge removes edrive's private control state and Keychain identities.")
 	fmt.Println("It does not remove your working folder or Google Drive data.")
 	fmt.Print("Type PURGE to continue: ")
-	line, err := input.ReadString('
-')
+	line, err := input.ReadString('\\n')
 	if err != nil && err != io.EOF {
 		return err
 	}
