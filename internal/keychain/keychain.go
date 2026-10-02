@@ -105,3 +105,49 @@ func remove(account string) error {
 	}
 	return nil
 }
+
+func GetLegacyIdentity(account string) (string, error) {
+	return getLegacy(account)
+}
+
+func DeleteLegacyIdentity(account string) error {
+	return removeLegacy(account)
+}
+
+func GetLegacyRecovery() (string, error) {
+	return getLegacy("recovery-identity")
+}
+
+func DeleteLegacyRecovery() error {
+	return removeLegacy("recovery-identity")
+}
+
+func getLegacy(account string) (string, error) {
+	out, err := exec.Command(
+		"/usr/bin/security",
+		"find-generic-password",
+		"-s", Service,
+		"-a", account,
+		"-w",
+	).Output()
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" {
+		return "", fmt.Errorf("legacy Keychain item %q is empty", account)
+	}
+	return value, nil
+}
+
+func removeLegacy(account string) error {
+	if err := exec.Command(
+		"/usr/bin/security",
+		"delete-generic-password",
+		"-s", Service,
+		"-a", account,
+	).Run(); err != nil {
+		return err
+	}
+	return nil
+}
