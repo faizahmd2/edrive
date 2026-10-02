@@ -574,7 +574,7 @@ func pathInside(root, path string) bool {
 }
 
 func formatBytes(n int64) string {
-	const units = []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
 	size := float64(n)
 	i := 0
 	for size >= 1024 && i < len(units)-1 {
@@ -592,7 +592,8 @@ func createBackupPackage(parent string) (string, error) {
 			name = fmt.Sprintf("edrive-backup-%s-%02d", base, i)
 		}
 		path := filepath.Join(parent, name)
-		if err := os.Mkdir(path, 0700); err == nil {
+		err := os.Mkdir(path, 0700)
+		if err == nil {
 			return path, nil
 		}
 		if !os.IsExist(err) {
