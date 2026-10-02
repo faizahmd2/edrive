@@ -573,6 +573,17 @@ func pathInside(root, path string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
+func formatBytes(n int64) string {
+	const units = []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	size := float64(n)
+	i := 0
+	for size >= 1024 && i < len(units)-1 {
+		size /= 1024
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", size, units[i])
+}
+
 func createBackupPackage(parent string) (string, error) {
 	base := time.Now().UTC().Format("20060102-150405")
 	for i := 0; i < 100; i++ {
@@ -591,7 +602,7 @@ func createBackupPackage(parent string) (string, error) {
 	return "", fmt.Errorf("unable to create backup destination")
 }
 
-func withIdentityFile(identity, fn func(string) error) error {
+func withIdentityFile(identity string, fn func(string) error) error {
 	tmpDir, err := os.MkdirTemp(config.DefaultTempDir(), ".identity-")
 	if err != nil {
 		return err
