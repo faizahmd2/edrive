@@ -9,28 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/faiz/edrive/internal/config"
-	"github.com/faiz/edrive/internal/keychain"
 	"github.com/faiz/edrive/internal/ageutil"
-)
-
-var labelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}package device
-
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
-	"regexp"
-	"sort"
-	"strings"
-	"time"
-
 	"github.com/faiz/edrive/internal/config"
 	"github.com/faiz/edrive/internal/keychain"
 )
 
-var labelPattern = )
+var labelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 type Record struct {
 	Label     string    `json:"label"`
@@ -135,7 +119,11 @@ func Import(label, identity, ageKeygen string) (Record, error) {
 		return Record{}, err
 	}
 
-	rec := Record{Label: label, Recipient: recipient, CreatedAt: time.Now().UTC()}
+	rec := Record{
+		Label:     label,
+		Recipient: recipient,
+		CreatedAt: time.Now().UTC(),
+	}
 	reg.Devices = append(reg.Devices, rec)
 	if err := reg.Save(); err != nil {
 		_ = keychain.DeleteIdentity(label)
@@ -163,25 +151,7 @@ func AddGenerated(label, ageKeygen string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	recipient, err := ageutil.Recipient(identity, ageKeygen, config.TempDir())
-	if err != nil {
-		return Record{}, err
-	}
-	if err := keychain.SetIdentity(label, identity); err != nil {
-		return Record{}, err
-	}
-
-	rec := Record{
-		Label:     label,
-		Recipient: recipient,
-		CreatedAt: time.Now().UTC(),
-	}
-	reg.Devices = append(reg.Devices, rec)
-	if err := reg.Save(); err != nil {
-		_ = keychain.DeleteIdentity(label)
-		return Record{}, err
-	}
-	return rec, nil
+	return Import(label, identity, ageKeygen)
 }
 
 func Ensure(label, ageKeygen string) (Record, error) {
@@ -205,6 +175,7 @@ func Remove(label string) error {
 	if err != nil {
 		return err
 	}
+
 	found := false
 	devices := reg.Devices[:0]
 	for _, d := range reg.Devices {
@@ -223,6 +194,7 @@ func Remove(label string) error {
 	if err := keychain.DeleteIdentity(label); err != nil {
 		return err
 	}
+
 	reg.Devices = devices
 	return reg.Save()
 }
@@ -243,6 +215,7 @@ func Recipients() ([]string, error) {
 	if len(devices) == 0 {
 		return nil, fmt.Errorf("no device identities configured")
 	}
+
 	recipients := make([]string, 0, len(devices))
 	for _, d := range devices {
 		if strings.TrimSpace(d.Recipient) == "" {
