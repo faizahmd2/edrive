@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/faiz/edrive/internal/config"
-	"github.com/faiz/edrive/internal/deps"
-	"github.com/faiz/edrive/internal/ui"
+	"github.com/faizahmd2/edrive/internal/config"
+	"github.com/faizahmd2/edrive/internal/deps"
+	"github.com/faizahmd2/edrive/internal/ui"
 )
 
 func (a App) Remove() error {
