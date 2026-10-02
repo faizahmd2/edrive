@@ -6,16 +6,8 @@ import (
 	"testing"
 )
 
-func TestInspectAndMarkManaged(t *testing.T) {
+func TestInspectCompleteUnmanagedVault(t *testing.T) {
 	root := t.TempDir()
-	state, err := Inspect(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !state.Exists || !state.Empty || state.Managed {
-		t.Fatalf("unexpected empty state: %+v", state)
-	}
-
 	vaultPath := filepath.Join(root, "edrive")
 	if err := os.MkdirAll(vaultPath, 0700); err != nil {
 		t.Fatal(err)
@@ -27,22 +19,14 @@ func TestInspectAndMarkManaged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state, err = Inspect(vaultPath)
+	state, err := Inspect(vaultPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Managed || !state.Complete {
-		t.Fatalf("expected complete unmanaged vault: %+v", state)
+	if !state.Exists || !state.HasCryptomatorFiles || !state.Complete {
+		t.Fatalf("expected complete vault: %+v", state)
 	}
-
-	if err := MarkManaged(vaultPath); err != nil {
-		t.Fatal(err)
-	}
-	state, err = Inspect(vaultPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !state.Managed || !state.Complete {
-		t.Fatalf("expected complete managed vault: %+v", state)
+	if state.Managed {
+		t.Fatalf("test vault must not be managed: %+v", state)
 	}
 }
