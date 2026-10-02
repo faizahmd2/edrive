@@ -101,8 +101,11 @@ func Load(path string) (Config, error) {
 	if cfg.Version == 0 {
 		cfg.Version = CurrentVersion
 	}
-	if cfg.Version != CurrentVersion {
+	if cfg.Version > CurrentVersion {
 		return Config{}, fmt.Errorf("unsupported edrive config version: %d", cfg.Version)
+	}
+	if cfg.Version < CurrentVersion {
+		cfg.Version = CurrentVersion
 	}
 	cfg.DataRoot = ExpandOrDefault(cfg.DataRoot, DefaultDataRoot())
 	cfg.StorageProvider = ExpandOrDefault(cfg.StorageProvider, "google-drive")
