@@ -99,7 +99,7 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CreateEncryptedSnapshot(root, recipients, manifest, fout); err != nil {
+	if err := CreateEncryptedSnapshot(root, recipients, fakeAge, "/usr/bin/zstd", manifest, fout); err != nil {
 		_ = fout.Close()
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadAndVerifyArchive(f, identity, "", false)
+	got, err := ReadAndVerifyArchive(f, identity, fakeAge, "/usr/bin/zstd", "", false)
 	_ = f.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadAndVerifyArchive(f, identity, restore, true); err != nil {
+	if _, err := ReadAndVerifyArchive(f, identity, fakeAge, "/usr/bin/zstd", restore, true); err != nil {
 		_ = f.Close()
 		t.Fatal(err)
 	}
