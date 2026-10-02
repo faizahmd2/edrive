@@ -1,77 +1,103 @@
 # edrive
 
-`edrive` is a local-first developer identity toolkit. Version 0.1 intentionally keeps
-Cryptomator as the daily live encrypted filesystem and adds an independent,
-portable recovery path based on standard `age` encryption.
+`edrive` is a local-first developer identity toolkit. The live data store is a
+Cryptomator vault backed by a local Google Drive filesystem, while recovery is
+kept independent through portable `age`-encrypted snapshots.
 
-## Current architecture
+## Architecture
 
 ```text
-Mac
+Daily use:
+
+Finder
   -> Cryptomator / FUSE-T
   -> mounted vault
-  -> edrive backup
-  -> tar -> zstd -> age
+  -> Google Drive sync
+
+Recovery:
+
+mounted vault
+  -> tar
+  -> zstd
+  -> age
   -> independent recovery snapshot
-
-Google Drive remains the remote storage for the Cryptomator vault.
-
-Recovery does not depend on Cryptomator, Google Drive, or edrive.
 ```
 
-## What this version does
+Cryptomator protects the live vault. Google Drive is only the storage/sync
+layer. `age` is a separate recovery path. `edrive` orchestrates these pieces.
 
-- `edrive doctor` checks the local setup.
-- `edrive status` shows whether the Cryptomator mount is available.
-- `edrive backup` creates a streaming `.tar.zst.age` snapshot.
-- `edrive backups` lists snapshots.
-- `edrive verify --identity ...` decrypts a snapshot and verifies every file hash.
-- `edrive restore --identity ... --output ...` restores into an empty directory.
-- `edrive identity generate` creates a post-quantum age identity.
-- `edrive identity recipient` prints its public recipient.
-- `edrive identity add` appends a public recipient to the configured recipients file.
+Recovery does not require Cryptomator or `edrive` to decrypt the archive.
+
+## Commands
+
+```sh
+edrive setup
+edrive doctor
+edrive status
+edrive unlock
+edrive lock
+
+edrive backup
+edrive backups
+edrive verify [snapshot] --identity PATH
+edrive restore [snapshot] --identity PATH --output DIR
+
+edrive identity generate --output PATH
+edrive identity recipient PATH
+edrive identity add PATH --to RECIPIENTS_FILE
+```
+
+## Setup
+
+The normal installation flow is:
+
+```sh
+./bootstrap.sh
+edrive setup
+```
+
+`edrive setup` is macOS-aware and prepares the local environment. It can install
+the required Homebrew packages/casks, detect the local Google Drive location,
+locate or download the official Cryptomator CLI, create the local edrive
+directories, reuse/create the Mac age identity, register known public
+recipients, and write the machine-specific config.
+
+Cryptomator vault creation remains a Cryptomator operation. On a fresh machine,
+setup will open Cryptomator and tell you the exact vault path to create or add.
+After that, run `edrive setup` again and it will discover the vault ID from
+Cryptomator's local settings.
+
+The generated config contains absolute machine-specific paths and is ignored by
+Git. The real recipients file is also local-only.
+
+## Identity model
+
+For now the identity set is deliberately small:
+
+- Mac identity
+- offline recovery identity
+- iPhone identity later
+
+Private age identities stay on their respective devices. Only public recipients
+are used by `edrive` to encrypt recovery snapshots.
+
+## Recovery
+
+Backups are streamed without creating a plaintext intermediate archive:
+
+```text
+files -> tar -> zstd -> age -> .tar.zst.age
+```
+
+A recovery snapshot can therefore be decrypted with standard age tooling without
+depending on the `edrive` binary.
 
 ## Deliberate constraints
 
 - No custom cryptography.
 - No remote edrive server.
-- No plaintext secrets in the repo.
-- Recovery identity is external to the normal working tree.
-- The first release uses the official `age` and `zstd` executables instead of reimplementing
-  those libraries. Once the workflow is proven, the Go age library can be embedded to
-  reduce external dependencies without changing the recovery format.
-
-## Setup
-
-```sh
-cp config/config.sh.example ~/Desktop/local-infra/edrive/config.sh
-chmod 600 ~/Desktop/local-infra/edrive/config.sh
-```
-
-Edit only paths/policy in `config.sh`.
-
-Install dependencies and build the Apple Silicon binary:
-
-```sh
-./bootstrap.sh
-```
-
-Then:
-
-```sh
-edrive doctor
-edrive status
-```
-
-## Identity model
-
-The intended long-term recipient set is small:
-
-- Mac device identity
-- mobile device identity
-- offline recovery identity
-
-A recovery snapshot can be encrypted to all configured public recipients. Losing one device
-therefore does not imply rotating the entire vault. The current release only provides the
-primitive for creating and registering age identities; OS Keychain/Keystore integration is
-intentionally deferred.
+- No plaintext secrets in the Git repository.
+- No encrypted vault data in Git.
+- Recovery identity remains outside the normal working tree.
+- The first recovery implementation uses the standard `age` and `zstd`
+  executables rather than reimplementing their formats.
