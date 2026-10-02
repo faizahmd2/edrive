@@ -103,6 +103,17 @@ func (a App) Doctor() error {
 			name = "edrive"
 		}
 		vaultPath := filepath.Join(root, name)
+
+		if binding, ok, err := vault.ReadBinding(); err != nil {
+			a.check(false, "edrive ownership", "saved vault ownership record is unreadable")
+			problems = append(problems, "Run 'edrive setup' and explicitly select the correct edrive vault; the ownership record will be rebuilt.")
+		} else if ok && binding.Path != filepath.Clean(vaultPath) {
+			a.check(false, "edrive ownership", "saved ownership points to another vault")
+			problems = append(problems, "Run 'edrive setup' and choose whether to use the currently selected vault or the previously bound one.")
+		} else {
+			a.check(true, "edrive ownership", "vault binding is consistent")
+		}
+
 		state, err := vault.Inspect(vaultPath)
 		switch {
 		case err != nil:
