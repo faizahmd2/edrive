@@ -117,15 +117,15 @@ func writeTarHeader(tw *tar.Writer, name string, mode int64, size int64, typefla
 	})
 }
 
-func CreateEncryptedSnapshot(root, recipientsFile string, manifest Manifest, output io.Writer) error {
-	ageCmd := exec.Command("age", "--encrypt", "--recipients-file", recipientsFile)
+func CreateEncryptedSnapshot(root, recipientsFile, agePath, zstdPath string, manifest Manifest, output io.Writer) error {
+	ageCmd := exec.Command(agePath, "--encrypt", "--recipients-file", recipientsFile)
 	ageCmd.Stdout = output
 	ageIn, err := ageCmd.StdinPipe()
 	if err != nil {
 		return err
 	}
 
-	zstdCmd := exec.Command("zstd", "-q", "-T0", "-c")
+	zstdCmd := exec.Command(zstdPath, "-q", "-T0", "-c")
 	zstdIn, err := zstdCmd.StdinPipe()
 	if err != nil {
 		_ = ageIn.Close()
@@ -305,8 +305,8 @@ func (a *DecryptedArchive) Abort() {
 	_ = a.ageCmd.Wait()
 }
 
-func OpenDecryptedArchive(input io.Reader, identityPath string) (*DecryptedArchive, error) {
-	ageCmd := exec.Command("age", "--decrypt", "--identity", identityPath)
+func OpenDecryptedArchive(input io.Reader, identityPath, agePath, zstdPath string) (*DecryptedArchive, error) {
+	ageCmd := exec.Command(agePath, "--decrypt", "--identity", identityPath)
 	ageIn, err := ageCmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -321,7 +321,7 @@ func OpenDecryptedArchive(input io.Reader, identityPath string) (*DecryptedArchi
 		return nil, fmt.Errorf("start age: %w", err)
 	}
 
-	zstdCmd := exec.Command("zstd", "-q", "-d", "-c")
+	zstdCmd := exec.Command(zstdPath, "-q", "-d", "-c")
 	zstdIn, err := zstdCmd.StdinPipe()
 	if err != nil {
 		_ = ageCmd.Process.Kill()
@@ -367,8 +367,8 @@ func OpenDecryptedArchive(input io.Reader, identityPath string) (*DecryptedArchi
 	}, nil
 }
 
-func ReadAndVerifyArchive(input io.Reader, identityPath string, extractRoot string, extract bool) (Manifest, error) {
-	archive, err := OpenDecryptedArchive(input, identityPath)
+func ReadAndVerifyArchive(input io.Reader, identityPath, agePath, zstdPath string, extractRoot string, extract bool) (Manifest, error) {
+	archive, err := OpenDecryptedArchive(input, identityPath, agePath, zstdPath)
 	if err != nil {
 		return Manifest{}, err
 	}
