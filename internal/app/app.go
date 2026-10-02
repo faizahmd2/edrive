@@ -19,7 +19,8 @@ import (
 )
 
 type App struct {
-	Config config.Config
+	Config      config.Config
+	ConfigError error
 }
 
 func (a App) Doctor() error {
