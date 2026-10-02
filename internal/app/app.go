@@ -30,7 +30,7 @@ func (a App) Doctor() error {
 	ok = a.check("config", a.Config.ConfigFound, a.Config.ConfigPath) && ok
 	ok = a.check("workspace", isDir(a.Config.DataRoot), a.Config.DataRoot) && ok
 
-	root, rootErr := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
+	root, rootErr := (provider.GoogleDrive{PreferredRoot: a.Config.StorageRoot, StorageName: a.Config.StorageName}).Root()
 	if rootErr != nil {
 		ok = a.check("Google Drive", false, "local storage unavailable") && ok
 	} else {
@@ -129,7 +129,7 @@ func (a App) ensureUnlocked() error {
 		return fmt.Errorf("Cryptomator CLI is not configured")
 	}
 
-	storageRoot, err := (provider.GoogleDrive{StorageName: a.Config.StorageName}).Root()
+	storageRoot, err := (provider.GoogleDrive{PreferredRoot: a.Config.StorageRoot, StorageName: a.Config.StorageName}).Root()
 	if err != nil {
 		return fmt.Errorf("Google Drive storage is unavailable")
 	}
