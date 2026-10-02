@@ -116,21 +116,46 @@ The edrive recovery key is independent backup-decryption material. It is stored 
 
 That separation means backup recovery does not require the live Cryptomator mount to be available.
 
-## Decode anywhere
+## Decode and recovery
 
 ```
 edrive decode /path/to/backup.tar.zst.age /path/to/edrive-recovery-key.txt
 ```
 
-`edrive decode` is intentionally independent of edrive setup. It only requires the `age` command and the two files supplied by the user.
+`edrive decode` is intentionally independent of edrive setup.
 
-It removes the `.age` layer and writes the decrypted sibling next to the encrypted input:
+It performs the complete recovery pipeline:
 
 ```
-backup.tar.zst.age  ->  backup.tar.zst
+.tar.zst.age
+    ↓ age decrypt
+.tar.zst stream
+    ↓ zstd decompress
+tar stream
+    ↓ extract
+recovered-folder/
 ```
 
-It does not automatically extract the tar/zstd archive.
+No intermediate `.tar.zst` file is left on disk.
+
+For:
+
+```
+edrive-backup-20261002-180139.tar.zst.age
+```
+
+the result is:
+
+```
+edrive-backup-20261002-180139/
+├── ...
+```
+
+The output folder is created as a sibling of the encrypted backup. edrive never overwrites an existing output folder.
+
+Decode requires the `age` and `zstd` commands, plus the supplied recovery-key file. It does not require edrive setup, Google Drive, or Cryptomator.
+
+Archive entries are checked before extraction so an archive cannot escape the recovery folder through paths such as `../...` or absolute paths.
 
 ## Devices
 
