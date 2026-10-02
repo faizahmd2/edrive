@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/faiz/edrive/internal/config"
+	"github.com/faizahmd2/edrive/internal/config"
 )
 
 const bindingVersion = 1
