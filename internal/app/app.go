@@ -394,11 +394,25 @@ func (a App) Restore() error {
 		return fmt.Errorf("selected folder does not contain an edrive backup")
 	}
 
-	recoveryIdentity, keyErr := keychain.Get(keychain.RecoveryIdentity)
+	recoveryIdentity, keyErr := keychain.Get(keychain.DeviceIdentity)
 	if keyErr != nil {
-		if keychain.Exists(keychain.RecoveryIdentity) {
-			return fmt.Errorf("recovery identity access was not granted")
+		if keychain.Exists(keychain.DeviceIdentity) {
+			recoveryIdentity, keyErr = keychain.Get(keychain.RecoveryIdentity)
+			if keyErr != nil {
+				if keychain.Exists(keychain.RecoveryIdentity) {
+					return fmt.Errorf("recovery identity access was not granted")
+				}
+			}
 		}
+	}
+
+	if recoveryIdentity == "" {
+		recoveryIdentity, keyErr = keychain.Get(keychain.RecoveryIdentity)
+	}
+	if keyErr != nil && keychain.Exists(keychain.RecoveryIdentity) {
+		return fmt.Errorf("recovery identity access was not granted")
+	}
+	if recoveryIdentity == "" {
 		if !isFile(keyPath) {
 			return fmt.Errorf("recovery identity is unavailable")
 		}
