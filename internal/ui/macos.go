@@ -113,8 +113,7 @@ edrive() {
 
 func Confirm(prompt string) (bool, error) {
 	fmt.Print(prompt + " [y/N] ")
-	line, err := input.ReadString('
-')
+	line, err := input.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, err
 	}
@@ -130,8 +129,7 @@ func Confirm(prompt string) (bool, error) {
 
 func Pause(prompt string) error {
 	fmt.Print(prompt)
-	_, err := input.ReadString('
-')
+	_, err := input.ReadString('\n')
 	if err == io.EOF {
 		return nil
 	}
