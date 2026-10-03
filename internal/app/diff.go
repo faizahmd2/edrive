@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/faizahmd2/edrive/internal/config"
-	"github.com/faizahmd2/edrive/internal/rclone"
 	"github.com/faizahmd2/edrive/internal/vault"
 )
 
