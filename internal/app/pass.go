@@ -75,7 +75,7 @@ func (a App) passSetEditor(name string) error {
 	if err := os.MkdirAll(editDir, 0700); err != nil {
 		return fmt.Errorf("create pass editor directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(editDir, ".pass-edit-*")
+	tmp, err := os.CreateTemp(editDir, ".pass-edit-*.txt")
 	if err != nil {
 		return fmt.Errorf("create pass editor file: %w", err)
 	}
@@ -106,7 +106,7 @@ func (a App) passSetEditor(name string) error {
 
 	fmt.Println("Editing pass entry:", name)
 	fmt.Println("Save and exit the editor to update the entry.")
-	if err := ui.EditFile(path); err != nil {
+	if err := ui.EditTextFile(path); err != nil {
 		return fmt.Errorf("edit pass entry %q: %w", name, err)
 	}
 
