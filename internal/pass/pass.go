@@ -28,6 +28,15 @@ func Get(workspace, name string) (string, error) {
 	return value, nil
 }
 
+func Exists(workspace, name string) bool {
+	path, err := entryPath(workspace, name)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
 func ReadText(workspace, name string) (string, error) {
 	path, err := entryPath(workspace, name)
 	if err != nil {
