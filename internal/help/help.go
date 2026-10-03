@@ -36,7 +36,6 @@ func Print(command string) {
 		fmt.Println("  edrive pass list              List all keys.")
 		fmt.Println("  edrive pass <key> <value>     Replace with a one-line value.")
 		fmt.Println("  edrive pass set <key>         Open the value in TextEdit on macOS for multiline content.")
-		fmt.Println("  edrive pass migrate           Rename old extensionless entries to .txt for phone preview.")
 	case "diff":
 		fmt.Println("edrive diff")
 		fmt.Println("  Read-only comparison of the local encrypted vault and edrive-cloud:edrive.")
@@ -100,7 +99,6 @@ func PrintAll() {
 	fmt.Println("  edrive pass list")
 	fmt.Println("  edrive pass <key> <value>")
 	fmt.Println("  edrive pass set <key>")
-	fmt.Println("  edrive pass migrate")
 	fmt.Println("  edrive diff")
 	fmt.Println("  edrive cloud add [provider]")
 	fmt.Println("  edrive cloud remove")
