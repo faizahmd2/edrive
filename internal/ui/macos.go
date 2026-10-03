@@ -78,6 +78,7 @@ func EditTextFile(path string) error {
 		args := []string{
 			"/usr/bin/open", "-na", "TextEdit", "--args",
 			"-RichText", "0",
+			"-TextReplacement", "0",
 			"-NSAutomaticCapitalizationEnabled", "NO",
 			"-NSAutomaticDashSubstitutionEnabled", "NO",
 			"-NSAutomaticPeriodSubstitutionEnabled", "NO",
