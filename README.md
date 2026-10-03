@@ -46,14 +46,17 @@ edrive lock
 edrive push
 edrive pull
 
-edrive backup
 edrive pass <key>
 edrive pass ls
+edrive pass list
 edrive pass <key> <value>
 edrive pass set <key>
+
 edrive diff
 edrive cloud add [provider]
 edrive cloud remove
+
+edrive backup
 edrive decode <encrypted-file> <recovery-key>
 
 edrive remove
@@ -62,11 +65,12 @@ edrive device add <label>
 edrive device list
 edrive device remove <label>
 
-edrive help
+edrive pwd
+edrive help [command]
 edrive version
 ~~~
 
-There is no cd command, shell integration, Google Drive folder chooser, or realtime sync daemon.
+Every command also accepts `help`, `--help`, or `-h` where a command-specific help page is useful.
 
 ## Fixed local layout
 
@@ -106,16 +110,18 @@ Cryptomator
 Cryptomator CLI 0.6.2
 ~~~
 
-When the rclone remote named edrive-cloud does not exist, setup asks how to configure it:
+When the fixed rclone remote `edrive-cloud` does not exist, setup asks:
 
 ~~~
 1) Built-in rclone setup
 2) edrive guided setup
 ~~~
 
-Press Enter for the default rclone method.
+Press Enter for the default built-in rclone method.
 
-The built-in rclone method is unchanged: edrive opens rclone's normal interactive configuration. The guided edrive method keeps rclone as the cloud engine but removes its provider questionnaire from the normal setup flow. It presents a small typed menu:
+The built-in method is the normal rclone questionnaire and is unchanged.
+
+The guided method keeps rclone as the cloud transport but lets edrive choose a small set of common providers:
 
 ~~~
 1) Google Drive
@@ -126,33 +132,23 @@ e) Cloudflare R2
 5) Microsoft OneDrive
 ~~~
 
-Google Drive asks for an optional client ID and client secret. Press Enter for both to use rclone's shared client. Rclone's current Google Drive documentation says the shared client is being retired during 2026, so a personal client avoids depending on it. The guided flow then opens the real rclone configuration file in a terminal editor and automatically finishes OAuth authentication in the browser. urlrclone Google Drive configurationhttps://rclone.org/drive/
+The provider configuration is prepared in the real rclone configuration file. edrive opens that file in a terminal editor, waits for the edit to finish, validates the resulting provider, and then completes OAuth in the browser when the provider uses OAuth.
 
-For S3, R2, and B2, the editor is used for provider credentials and endpoint/region details. Cloudflare R2 uses rclone's S3 backend with the Cloudflare provider and an endpoint based on the Cloudflare account ID. urlrclone S3 and Cloudflare R2 configurationhttps://rclone.org/s3/
+For Google Drive, edrive optionally accepts your own client ID and client secret. Press Enter for both to use rclone's shared/public client. Rclone currently documents that its shared Google client is being retired during 2026, so an own client avoids that dependency. urlrclone Google Drive configurationhttps://rclone.org/drive/
 
-Dropbox and OneDrive use the same editor-first flow followed by browser authentication. urlrclone Dropbox configurationhttps://rclone.org/dropbox/ urlrclone OneDrive configurationhttps://rclone.org/onedrive/
+For Cloudflare R2, edrive can pre-fill the endpoint from the account ID. Rclone configures R2 through its S3 backend using the Cloudflare provider. urlrclone S3 and Cloudflare R2 configurationhttps://rclone.org/s3/
 
-The guided editor method requires an editable rclone configuration file. If rclone's configuration file is encrypted, use the built-in rclone method instead. Rclone supports configuration-file encryption separately. urlrclone configuration encryptionhttps://rclone.org/docs/#configuration-encryption
+Dropbox and OneDrive finish through browser OAuth after the editor step. urlrclone Dropbox configurationhttps://rclone.org/dropbox/ urlrclone OneDrive configurationhttps://rclone.org/onedrive/
 
-After login, setup uses the fixed remote path:
+The guided editor method requires the rclone configuration file to be plaintext because it edits that file directly. If your rclone configuration file is encrypted, use the built-in rclone setup instead. Rclone supports encrypted configuration separately. urlrclone configuration encryptionhttps://rclone.org/docs/#configuration-encryption
+
+After cloud setup, the fixed remote remains:
 
 ~~~
 edrive-cloud:edrive
 ~~~
 
-If that remote already contains a Cryptomator vault, edrive pulls it into the fixed local vault.
-
-If no remote vault exists, setup opens Cryptomator once so the user can create:
-
-~~~
-~/.edrive/vault
-~~~
-
-That is the only normal GUI operation required for vault creation/registration. Setup then verifies the vault is registered and that its password is stored in macOS Keychain.
-
-There are no Google Drive Desktop checks and no folder-selection dialogs.
-
-Cryptomator itself is not a sync tool. Its desktop documentation expects the encrypted vault to be synchronized by another cloud-sync tool. edrive uses rclone for exactly that role.
+If the remote vault is missing but the local encrypted vault already exists, the rest of setup publishes the existing local vault as before.
 
 ## Mac workflow
 
@@ -240,26 +236,23 @@ Do not run push or pull while the Cryptomator mount is active.
 
 ## Pass
 
-The `pass` command is deliberately only a thin convention over files in the encrypted workspace. It is not a separate password database and it does not add another encryption layer.
+`pass` is deliberately only a convention over files in the encrypted workspace. It is not a separate password manager and it adds no second encryption layer.
 
-The files live at:
+The fixed directory is:
 
-~~~text
+~~~
 ~/.edrive/workspace/pass/
-├── insta
-├── github
-└── aws
 ~~~
 
-Each key is a filename. The file contains its secret value.
+Each key is one filename whose contents are the secret value.
 
-Read a value:
+Read one key:
 
 ~~~bash
 edrive pass insta
 ~~~
 
-List keys without printing values:
+List all keys without printing values:
 
 ~~~bash
 edrive pass ls
@@ -272,15 +265,15 @@ Set a one-line value directly:
 edrive pass insta "new-password"
 ~~~
 
-Set or edit a multiline value:
+Set a new or existing multiline value through the terminal editor:
 
 ~~~bash
 edrive pass set certificate
 ~~~
 
-The editor is a terminal editor selected in this order: `nvim`, `vim`, then the macOS-provided `vi`. `nano` is not used.
+The editor is selected from `nvim`, `vim`, then macOS-provided `vi`. `nano` is not used.
 
-For both direct updates and editor updates, edrive unlocks the macOS Keychain before modifying the encrypted workspace. The edited file is written to a protected temporary file first and only replaces the pass entry after the editor exits successfully.
+The editor flow starts from the existing value when the key already exists. The edited content is staged in a protected temporary file and replaces the real pass entry only after the editor exits successfully.
 
 ## Diff
 
@@ -339,6 +332,43 @@ edrive cloud remove
 Cloud removal deletes only the `edrive-cloud` rclone configuration. It does not delete the remote encrypted vault, cloud files, or the local encrypted vault. After adding another provider, run `edrive push` to publish the existing local vault to that provider.
 
 Rclone's configuration file is the persistent configuration store. edrive prints its path after guided setup so the saved provider configuration is easy to locate.
+
+## Cloud management
+
+The fixed cloud remote is always `edrive-cloud`, and the encrypted vault path is always `edrive-cloud:edrive`.
+
+Add a provider with the guided flow:
+
+~~~bash
+edrive cloud add
+~~~
+
+Or specify one directly:
+
+~~~bash
+edrive cloud add google
+edrive cloud add s3
+edrive cloud add r2
+edrive cloud add b2
+edrive cloud add dropbox
+edrive cloud add onedrive
+~~~
+
+Remove the local cloud configuration:
+
+~~~bash
+edrive cloud remove
+~~~
+
+Removal deletes only the local rclone configuration for `edrive-cloud`. It does not delete the remote encrypted vault, remote files, or the local encrypted vault.
+
+After adding a different provider, run:
+
+~~~bash
+edrive push
+~~~
+
+to publish the existing local encrypted vault to the new provider.
 
 ## Recovery backup
 
