@@ -1,6 +1,6 @@
 package cloud
 
-import ("os"\n\t"testing"\n)
+import (\n\t"os"\n\t"testing"\n)
 
 func TestProviderAliases(t *testing.T) {
 	cases := map[string]string{
