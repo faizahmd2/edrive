@@ -59,7 +59,7 @@ func providerFor(value string) (Provider, error) {
 		"aws": "2", "s3": "2",
 		"r2": "e", "cloudflare": "e", "cloudflare-r2": "e",
 		"b2": "3", "backblaze": "3",
-		"dropbox": "4",
+		"dropbox":  "4",
 		"onedrive": "5", "one-drive": "5",
 	}
 	if alias, ok := aliases[value]; ok {
