@@ -18,9 +18,9 @@ func Migrate(workspace string) (int, error) {
 	}
 
 	type item struct {
-	from string
-	to   string
-	name string
+		from string
+		to   string
+		name string
 	}
 	var items []item
 	for _, entry := range entries {
