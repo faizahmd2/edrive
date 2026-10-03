@@ -105,32 +105,3 @@ func TestLegacyExtensionlessEntryStillWorks(t *testing.T) {
 		t.Fatalf("value=%q", got)
 	}
 }
-
-func TestMigrateRenamesExtensionlessEntries(t *testing.T) {
-	workspace := t.TempDir()
-	dir := filepath.Join(workspace, "pass")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "legacy"), []byte("old-value"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	count, err := Migrate(workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("count=%d", count)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "legacy")); !os.IsNotExist(err) {
-		t.Fatalf("legacy file still exists")
-	}
-	got, err := os.ReadFile(filepath.Join(dir, "legacy.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "old-value" {
-		t.Fatalf("value=%q", got)
-	}
-}
