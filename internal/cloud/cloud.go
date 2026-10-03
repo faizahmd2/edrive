@@ -110,7 +110,7 @@ func setupGoogle(rc *rclone.Client, provider Provider) error {
 	if err != nil {
 		return err
 	}
-	clientSecret, err := ui.ReadLine("Google client secret [shared]: ")
+	clientSecret, err := ui.ReadSecret("Google client secret [shared]: ")
 	if err != nil {
 		return err
 	}
