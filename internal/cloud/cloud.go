@@ -101,6 +101,7 @@ func setupGoogle(rc *rclone.Client, provider Provider) error {
 	fmt.Println("Google Drive uses OAuth.")
 	fmt.Println("Press Enter for both values to use rclone's shared/public client.")
 	fmt.Println("Rclone's current documentation says its shared Google client is being retired during 2026; using your own client avoids that dependency.")
+
 	clientID, err := ui.ReadLine("Google client ID [shared]: ")
 	if err != nil {
 		return err
@@ -117,20 +118,19 @@ func setupGoogle(rc *rclone.Client, provider Provider) error {
 		"scope":           "drive",
 		"config_is_local": "true",
 	}
+	prefill := map[string]string{}
 	if clientID != "" {
-		options["client_id"] = clientID
-		options["client_secret"] = clientSecret
+		prefill["client_id"] = clientID
+		prefill["client_secret"] = clientSecret
 	}
-
-	return createEditAuthenticate(rc, provider, options)
+	return createEditAuthenticate(rc, provider, options, prefill)
 }
 
 func setupS3(rc *rclone.Client, provider Provider) error {
-	options := map[string]string{
+	return createEditAuthenticate(rc, provider, map[string]string{
 		"provider": "AWS",
 		"env_auth": "false",
-	}
-	return createEditAuthenticate(rc, provider, options)
+	}, nil)
 }
 
 func setupR2(rc *rclone.Client, provider Provider) error {
@@ -143,23 +143,24 @@ func setupR2(rc *rclone.Client, provider Provider) error {
 		"env_auth": "false",
 		"region":   "auto",
 	}
+	prefill := map[string]string{}
 	if accountID != "" {
-		options["endpoint"] = "https://" + accountID + ".r2.cloudflarestorage.com"
+		prefill["endpoint"] = "https://" + accountID + ".r2.cloudflarestorage.com"
 	}
-	return createEditAuthenticate(rc, provider, options)
+	return createEditAuthenticate(rc, provider, options, prefill)
 }
 
 func setupB2(rc *rclone.Client, provider Provider) error {
-	return createEditAuthenticate(rc, provider, nil)
+	return createEditAuthenticate(rc, provider, nil, nil)
 }
 
 func setupOAuth(rc *rclone.Client, provider Provider, label string) error {
 	fmt.Println()
 	fmt.Println(label + " will authenticate in your browser after the config is saved.")
-	return createEditAuthenticate(rc, provider, nil)
+	return createEditAuthenticate(rc, provider, nil, nil)
 }
 
-func createEditAuthenticate(rc *rclone.Client, provider Provider, options map[string]string) error {
+func createEditAuthenticate(rc *rclone.Client, provider Provider, options, prefill map[string]string) error {
 	if err := rc.CreateRemote(provider.RcloneType, options); err != nil {
 		return err
 	}
@@ -174,9 +175,13 @@ func createEditAuthenticate(rc *rclone.Client, provider Provider, options map[st
 	if err != nil {
 		return err
 	}
-
 	if err := validateEditableConfig(configPath); err != nil {
 		return err
+	}
+	for key, value := range prefill {
+		if err := PatchValue(configPath, remoteName, key, value); err != nil {
+			return fmt.Errorf("prepare rclone configuration: %w", err)
+		}
 	}
 
 	fmt.Println()
@@ -208,7 +213,6 @@ func createEditAuthenticate(rc *rclone.Client, provider Provider, options map[st
 			return err
 		}
 	}
-
 	if err := rc.CheckConfigured(); err != nil {
 		return err
 	}
@@ -236,54 +240,49 @@ func PatchValue(path, section, key, value string) error {
 	if err != nil {
 		return err
 	}
-	lines := strings.SplitAfter(string(data), "\n")
-	inSection := false
-	foundSection := false
-	foundKey := false
+
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	sectionStart := -1
+	sectionEnd := len(lines)
 	for i, line := range lines {
-		raw := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		trimmed := strings.TrimSpace(raw)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			inSection = trimmed == "["+section+"]"
-			if inSection {
-				foundSection = true
-			}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "["+section+"]" {
+			sectionStart = i
 			continue
 		}
-		if !inSection {
-			continue
-		}
-		k, ok := splitINIKey(raw)
-		if ok && strings.EqualFold(k, key) {
-			eol := "\n"
-			if strings.HasSuffix(line, "\r\n") {
-				eol = "\r\n"
-			}
-			lines[i] = key + " = " + value + eol
-			foundKey = true
+		if sectionStart >= 0 && i > sectionStart && strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			sectionEnd = i
+			break
 		}
 	}
-	if !foundSection {
+	if sectionStart < 0 {
 		return fmt.Errorf("rclone section %q not found", section)
 	}
-	if !foundKey {
-		for i, line := range lines {
-			raw := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-			trimmed := strings.TrimSpace(raw)
-			if inSection && false {
-				_ = i
-				_ = trimmed
-			}
-			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") && trimmed != "["+section+"]" {
-				lines = append(lines[:i], append([]string{key + " = " + value + "\n"}, lines[i:]...)...)
-				foundKey = true
-				break
-			}
-		}
-		if !foundKey {
-			lines = append(lines, key+" = "+value+"\n")
+
+	valueLine := key + " = " + value
+	for i := sectionStart + 1; i < sectionEnd; i++ {
+		if existing, ok := splitINIKey(lines[i]); ok && strings.EqualFold(existing, key) {
+			lines[i] = valueLine
+			return writeConfig(path, lines)
 		}
 	}
+
+	lines = append(lines, "")
+	copy(lines[sectionEnd+1:], lines[sectionEnd:])
+	lines[sectionEnd] = valueLine
+	return writeConfig(path, lines)
+}
+
+func writeConfig(path string, lines []string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".rclone-config-*.tmp")
 	if err != nil {
 		return err
@@ -293,11 +292,11 @@ func PatchValue(path, section, key, value string) error {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 	}()
-	info, statErr := os.Stat(path)
-	if statErr == nil {
-		_ = tmp.Chmod(info.Mode().Perm())
+
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		return err
 	}
-	if _, err := tmp.WriteString(strings.Join(lines, "")); err != nil {
+	if _, err := tmp.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
@@ -320,7 +319,7 @@ func splitINIKey(line string) (string, bool) {
 func Providers() []Provider {
 	out := append([]Provider(nil), providers...)
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].Code < out[j].Code
+		return out[i].Code < providers[j].Code
 	})
 	return out
 }
