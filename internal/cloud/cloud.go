@@ -23,7 +23,7 @@ type Provider struct {
 
 var providers = []Provider{
 	{Code: "1", Name: "Google Drive", RcloneType: "drive", OAuth: true},
-	{Code: "2", Name: "Amazon S3 / S3-compatible", RcloneType: "s3", Backend: "AWS"},
+	{Code: "2", Name: "Amazon S3 / S3-compatible", RcloneType: "s3"},
 	{Code: "e", Name: "Cloudflare R2", RcloneType: "s3", Backend: "Cloudflare"},
 	{Code: "3", Name: "Backblaze B2", RcloneType: "b2"},
 	{Code: "4", Name: "Dropbox", RcloneType: "dropbox", OAuth: true},
@@ -304,12 +304,16 @@ func PatchValue(path, section, key, value string) error {
 }
 
 func writeConfig(path string, lines []string) error {
-	info, err := os.Stat(path)
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	}
+	info, err := os.Stat(target)
 	if err != nil {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".rclone-config-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".rclone-config-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -331,7 +335,7 @@ func writeConfig(path string, lines []string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	return os.Rename(tmpPath, target)
 }
 
 func splitINIKey(line string) (string, bool) {
