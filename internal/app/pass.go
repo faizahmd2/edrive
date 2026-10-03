@@ -77,7 +77,7 @@ func (a App) Pass(args []string) error {
 		return nil
 
 	default:
-		return fmt.Errorf("usage: edrive pass <key> | edrive pass ls | edrive pass list | edrive pass <key> <value> | edrive pass set <key>")
+		return fmt.Errorf("usage: edrive pass <key> | edrive pass ls | edrive pass list | edrive pass <key> <value> | edrive pass set <key> | edrive pass migrate")
 	}
 }
 
