@@ -130,7 +130,20 @@ func List(workspace string) ([]string, error) {
 		if !entry.Type().IsRegular() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		names = append(names, entry.Name())
+		name := entry.Name()
+		if strings.HasSuffix(name, ".txt") {
+			name = strings.TrimSuffix(name, ".txt")
+		}
+		alreadyListed := false
+		for _, existing := range names {
+			if existing == name {
+				alreadyListed = true
+				break
+			}
+		}
+		if !alreadyListed {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names)
 	return names, nil
