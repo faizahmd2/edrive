@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/faizahmd2/edrive/internal/config"
@@ -70,10 +71,11 @@ func (a App) passSetEditor(name string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(config.TempDir(), 0700); err != nil {
+	editDir := filepath.Join(config.WorkspacePath(), "pass")
+	if err := os.MkdirAll(editDir, 0700); err != nil {
 		return fmt.Errorf("create pass editor directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(config.TempDir(), ".pass-edit-*")
+	tmp, err := os.CreateTemp(editDir, ".pass-edit-*")
 	if err != nil {
 		return fmt.Errorf("create pass editor file: %w", err)
 	}
