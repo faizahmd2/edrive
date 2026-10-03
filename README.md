@@ -134,6 +134,8 @@ e) Cloudflare R2
 
 For Google Drive, edrive asks for an optional client ID and client secret. Press Enter for both to use rclone's shared/public client. After the credentials are entered, edrive runs rclone's browser authorization directly and writes the returned OAuth token into the rclone configuration. There is no rclone editor or token-refresh question in the guided Google flow. Rclone currently documents that its shared Google client is being retired during 2026, so using your own client avoids that dependency. [rclone Google Drive configuration](https://rclone.org/drive/)
 
+When the Google OAuth app is left in `Testing`, Google currently limits non-profile grants to 7 days. That is a grant/token lifetime, not a client-secret lifetime. After the grant expires, remove and add the Google provider again to authorize a fresh grant. [Google OAuth audience documentation](https://support.google.com/cloud/answer/15549945)
+
 For Cloudflare R2, edrive can pre-fill the endpoint from the account ID. Rclone configures R2 through its S3 backend using the Cloudflare provider. [rclone S3 and Cloudflare R2 configuration](https://rclone.org/s3/)
 
 Dropbox and OneDrive finish through browser OAuth after the editor step. [rclone Dropbox configuration](https://rclone.org/dropbox/) [rclone OneDrive configuration](https://rclone.org/onedrive/)
