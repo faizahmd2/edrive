@@ -32,6 +32,11 @@ var providers = []Provider{
 
 func EnsureConfigured(rc *rclone.Client) error {
 	if rc.RemoteExists() {
+		if err := rc.CheckConfigured(); err == nil {
+			return nil
+		} else if remoteType, _, identityErr := rc.RemoteIdentity(); identityErr == nil && remoteType == "drive" {
+			return fmt.Errorf("%w; Google Drive authorization may have expired, run 'edrive cloud remove' then 'edrive cloud add google' to reconfigure", err)
+		}
 		return rc.EnsureConfigured()
 	}
 
