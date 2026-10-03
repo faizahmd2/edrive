@@ -20,9 +20,6 @@ jobs:
         with:
           go-version: '1.26.8'
           cache: false
-      - name: Show gofmt diff
-        run: gofmt -d internal/cloud/cloud.go internal/cloud/cloud_test.go
-
       - name: Check gofmt
         run: |
           files="$(gofmt -l .)"
