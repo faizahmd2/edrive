@@ -48,6 +48,23 @@ func ReadLine(prompt string) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
+func ReadSecret(prompt string) (string, error) {
+	fmt.Print(prompt)
+	if err := exec.Command("stty", "-echo").Run(); err != nil {
+		return ReadLine("")
+	}
+	defer func() {
+		_ = exec.Command("stty", "echo").Run()
+		fmt.Println()
+	}()
+
+	line, err := input.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
 func EditFile(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("path is required")
