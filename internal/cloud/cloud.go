@@ -293,9 +293,13 @@ func PatchValue(path, section, key, value string) error {
 		}
 	}
 
+	insertAt := sectionEnd
+	for insertAt > sectionStart+1 && strings.TrimSpace(lines[insertAt-1]) == "" {
+		insertAt--
+	}
 	lines = append(lines, "")
-	copy(lines[sectionEnd+1:], lines[sectionEnd:])
-	lines[sectionEnd] = valueLine
+	copy(lines[insertAt+1:], lines[insertAt:])
+	lines[insertAt] = valueLine
 	return writeConfig(path, lines)
 }
 
