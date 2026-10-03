@@ -47,8 +47,13 @@ edrive push
 edrive pull
 
 edrive backup
-edrive pass <name> [value]
+edrive pass <key>
+edrive pass ls
+edrive pass <key> <value>
+edrive pass set <key>
 edrive diff
+edrive cloud add [provider]
+edrive cloud remove
 edrive decode <encrypted-file> <recovery-key>
 
 edrive remove
@@ -101,7 +106,33 @@ Cryptomator
 Cryptomator CLI 0.6.2
 ~~~
 
-When the rclone remote named edrive-cloud does not exist, setup starts rclone config inside the setup flow. Create the remote with that exact name. For Google Drive, choose Google Drive and complete the browser authentication. rclone's official Drive setup is browser based through rclone config.
+When the rclone remote named edrive-cloud does not exist, setup asks how to configure it:
+
+~~~
+1) Built-in rclone setup
+2) edrive guided setup
+~~~
+
+Press Enter for the default rclone method.
+
+The built-in rclone method is unchanged: edrive opens rclone's normal interactive configuration. The guided edrive method keeps rclone as the cloud engine but removes its provider questionnaire from the normal setup flow. It presents a small typed menu:
+
+~~~
+1) Google Drive
+2) Amazon S3 / S3-compatible
+e) Cloudflare R2
+3) Backblaze B2
+4) Dropbox
+5) Microsoft OneDrive
+~~~
+
+Google Drive asks for an optional client ID and client secret. Press Enter for both to use rclone's shared client. Rclone's current Google Drive documentation says the shared client is being retired during 2026, so a personal client avoids depending on it. The guided flow then opens the real rclone configuration file in a terminal editor and automatically finishes OAuth authentication in the browser. urlrclone Google Drive configurationhttps://rclone.org/drive/
+
+For S3, R2, and B2, the editor is used for provider credentials and endpoint/region details. Cloudflare R2 uses rclone's S3 backend with the Cloudflare provider and an endpoint based on the Cloudflare account ID. urlrclone S3 and Cloudflare R2 configurationhttps://rclone.org/s3/
+
+Dropbox and OneDrive use the same editor-first flow followed by browser authentication. urlrclone Dropbox configurationhttps://rclone.org/dropbox/ urlrclone OneDrive configurationhttps://rclone.org/onedrive/
+
+The guided editor method requires an editable rclone configuration file. If rclone's configuration file is encrypted, use the built-in rclone method instead. Rclone supports configuration-file encryption separately. urlrclone configuration encryptionhttps://rclone.org/docs/#configuration-encryption
 
 After login, setup uses the fixed remote path:
 
@@ -209,7 +240,7 @@ Do not run push or pull while the Cryptomator mount is active.
 
 ## Pass
 
-The `pass` command is deliberately only a thin convention over files in the encrypted workspace. It is not a separate password database and it does not use another encryption layer.
+The `pass` command is deliberately only a thin convention over files in the encrypted workspace. It is not a separate password database and it does not add another encryption layer.
 
 The files live at:
 
@@ -220,7 +251,7 @@ The files live at:
 └── aws
 ~~~
 
-Each file contains one single-line secret value.
+Each key is a filename. The file contains its secret value.
 
 Read a value:
 
@@ -228,15 +259,28 @@ Read a value:
 edrive pass insta
 ~~~
 
-Set a value:
+List keys without printing values:
+
+~~~bash
+edrive pass ls
+edrive pass list
+~~~
+
+Set a one-line value directly:
 
 ~~~bash
 edrive pass insta "new-password"
 ~~~
 
-Reading requires the workspace to be unlocked. Setting first unlocks the macOS Keychain so that the existing Cryptomator Keychain credential can be used without an unnecessary second Keychain-unlock prompt, then writes the file with mode `0600`.
+Set or edit a multiline value:
 
-The pass files are protected by Cryptomator together with the rest of the workspace. They are not separately stored in `config.json` or in edrive's own Keychain namespace.
+~~~bash
+edrive pass set certificate
+~~~
+
+The editor is a terminal editor selected in this order: `nvim`, `vim`, then the macOS-provided `vi`. `nano` is not used.
+
+For both direct updates and editor updates, edrive unlocks the macOS Keychain before modifying the encrypted workspace. The edited file is written to a protected temporary file first and only replaces the pass entry after the editor exits successfully.
 
 ## Diff
 
@@ -264,6 +308,37 @@ The comparison uses `rclone check --checksum --combined` and reports only differ
 ~~~
 
 Unchanged files are omitted. The command does not create the remote directory, reconnect the rclone account, upload, download, or modify either side. Run it with the workspace locked so Cryptomator is not changing the local encrypted vault while it is being inspected.
+
+## Cloud management
+
+The fixed cloud remote is always named `edrive-cloud`, and the encrypted vault remains at `edrive-cloud:edrive`.
+
+Add a provider through the guided flow:
+
+~~~bash
+edrive cloud add
+~~~
+
+Or specify a provider directly:
+
+~~~bash
+edrive cloud add google
+edrive cloud add s3
+edrive cloud add r2
+edrive cloud add b2
+edrive cloud add dropbox
+edrive cloud add onedrive
+~~~
+
+Remove the local cloud-provider configuration:
+
+~~~bash
+edrive cloud remove
+~~~
+
+Cloud removal deletes only the `edrive-cloud` rclone configuration. It does not delete the remote encrypted vault, cloud files, or the local encrypted vault. After adding another provider, run `edrive push` to publish the existing local vault to that provider.
+
+Rclone's configuration file is the persistent configuration store. edrive prints its path after guided setup so the saved provider configuration is easy to locate.
 
 ## Recovery backup
 
@@ -356,6 +431,21 @@ or an appropriate Linux package with its declared dependencies.
 The current source implementation is end-to-end for macOS. Linux packaging/support should be added only when the Linux Keychain, FUSE, Cryptomator CLI packaging, and service-management pieces are implemented together.
 
 Cryptomator CLI itself is distributed separately from the desktop application and uses a third-party filesystem integration such as FUSE-T on macOS. The pinned CLI version in edrive is 0.6.2.
+
+## Help
+
+Every supported command has command-specific help. These forms are supported:
+
+~~~bash
+edrive help
+edrive help pass
+edrive pass help
+edrive pass --help
+edrive cloud help
+edrive cloud --help
+~~~
+
+The same pattern works for `setup`, `doctor`, `open`, `lock`, `push`, `pull`, `backup`, `decode`, `diff`, `remove`, `device`, `pwd`, and `version`.
 
 ## Design constraints
 
