@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - master
-      - feature/setup-foundation
-      - feature/pass-cloud-help
-      - release
   pull_request:
     branches:
       - master
