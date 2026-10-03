@@ -67,6 +67,97 @@ func (c *Client) EnsureConfigured() error {
 	return nil
 }
 
+func (c *Client) RemoteExists() bool {
+	return c.remoteExists()
+}
+
+func (c *Client) CreateRemote(remoteType string, options map[string]string) error {
+	if remoteType == "" {
+		return fmt.Errorf("rclone remote type is required")
+	}
+	args := []string{"config", "create", c.RemoteName, remoteType}
+	keys := make([]string, 0, len(options))
+	for key := range options {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		args = append(args, key, options[key])
+	}
+	args = append(args, "--non-interactive")
+
+	cmd := exec.Command(c.Path, args...)
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("create rclone remote %q: %s", c.RemoteName, compactOutput(stderr.Bytes(), err))
+	}
+	return nil
+}
+
+func (c *Client) DeleteRemote() error {
+	cmd := exec.Command(c.Path, "config", "delete", c.RemoteName)
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("delete rclone remote %q: %s", c.RemoteName, compactOutput(stderr.Bytes(), err))
+	}
+	return nil
+}
+
+func (c *Client) Reconnect() error {
+	return c.interactive("config", "reconnect", c.RemoteName+":")
+}
+
+func (c *Client) ConfigFile() (string, error) {
+	out, err := c.output("config", "file")
+	if err != nil {
+		return "", fmt.Errorf("find rclone configuration file: %s", compactOutput(out, err))
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" && !strings.HasPrefix(line, "Configuration file") {
+			return line, nil
+		}
+	}
+	return "", fmt.Errorf("rclone did not report its configuration file")
+}
+
+func (c *Client) RemoteIdentity() (string, string, error) {
+	out, err := c.output("config", "redacted", c.RemoteName)
+	if err != nil {
+		return "", "", fmt.Errorf("inspect rclone remote: %s", compactOutput(out, err))
+	}
+	var remoteType, backend string
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, ok := splitConfigLine(line)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "type":
+			remoteType = value
+		case "provider":
+			backend = value
+		}
+	}
+	if remoteType == "" {
+		return "", "", fmt.Errorf("rclone remote %q has no type", c.RemoteName)
+	}
+	return remoteType, backend, nil
+}
+
+func splitConfigLine(line string) (string, string, bool) {
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+}
+
 func (c *Client) CheckConfigured() error {
 	if !c.remoteExists() {
 		return fmt.Errorf("rclone remote %q is not configured; run 'edrive setup'", c.RemoteName)
