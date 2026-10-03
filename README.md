@@ -1,3 +1,4 @@
+
 # edrive
 
 Encrypted folder manager and orchestration.
@@ -60,6 +61,9 @@ edrive help                       Show help
 edrive version                    Show version
 edrive remove                     Remove local edrive state
 ```
+
+<img width="2172" height="724" alt="Encrypted File Workflow Diagram" src="https://github.com/user-attachments/assets/c68c30e4-096e-4fc5-a00f-d483c45345a5" />
+
 
 ## Backup
 
