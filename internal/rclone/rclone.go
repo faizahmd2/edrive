@@ -133,7 +133,7 @@ func extractAuthorizeToken(output string) (string, error) {
 
 	if start := strings.Index(output, "--->"); start >= 0 {
 		if end := strings.Index(output[start+4:], "<---"); end >= 0 {
-			candidate := strings.TrimSpace(output[start+4 : start+4+end])
+			candidate := strings.Join(strings.Fields(output[start+4:start+4+end]), "")
 			if token := decodeAuthorizeBlob(candidate); token != "" {
 				return token, nil
 			}
