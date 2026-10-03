@@ -165,6 +165,13 @@ func setupOAuth(rc *rclone.Client, provider Provider, label string) error {
 }
 
 func createEditAuthenticate(rc *rclone.Client, provider Provider, options, prefill map[string]string) error {
+	configPath, err := rc.ConfigFile()
+	if err != nil {
+		return err
+	}
+	if err := validateExistingConfig(configPath); err != nil {
+		return err
+	}
 	if err := rc.CreateRemote(provider.RcloneType, options); err != nil {
 		return err
 	}
@@ -175,11 +182,7 @@ func createEditAuthenticate(rc *rclone.Client, provider Provider, options, prefi
 		}
 	}()
 
-	configPath, err := rc.ConfigFile()
-	if err != nil {
-		return err
-	}
-	if err := validateEditableConfig(configPath); err != nil {
+if err := validateEditableConfig(configPath); err != nil {
 		return err
 	}
 	for key, value := range prefill {
@@ -226,6 +229,21 @@ func createEditAuthenticate(rc *rclone.Client, provider Provider, options, prefi
 	fmt.Println("Cloud provider configured:", provider.Name)
 	fmt.Println("Rclone config saved:", configPath)
 	return nil
+}
+
+func validateExistingConfig(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read rclone configuration: %w", err)
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || strings.Contains(trimmed, "[") {
+		return nil
+	}
+	return fmt.Errorf("rclone configuration is not a plain-text INI file; use the built-in rclone setup method instead")
 }
 
 func validateEditableConfig(path string) error {
