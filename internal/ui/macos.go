@@ -71,12 +71,63 @@ func EditTextFile(path string) error {
 		return fmt.Errorf("path is required")
 	}
 	if runtime.GOOS == "darwin" {
-		cmd := exec.Command("/usr/bin/open", "-W", "-a", "TextEdit", filepath.Clean(path))
-		if err := cmd.Run(); err == nil {
-			return nil
+		path = filepath.Clean(path)
+
+		// Start an isolated TextEdit instance with editing substitutions disabled.
+		// These are command-line defaults, so they affect only this TextEdit launch.
+		args := []string{
+			"/usr/bin/open", "-na", "TextEdit", "--args",
+			"-RichText", "0",
+			"-NSAutomaticCapitalizationEnabled", "NO",
+			"-NSAutomaticDashSubstitutionEnabled", "NO",
+			"-NSAutomaticPeriodSubstitutionEnabled", "NO",
+			"-NSAutomaticQuoteSubstitutionEnabled", "NO",
+			"-NSAutomaticSpellingCorrectionEnabled", "NO",
+			"-NSAutomaticTextCompletionEnabled", "NO",
+			"-NSAutomaticTextReplacementEnabled", "NO",
+			"-NSAutomaticDataDetectionEnabled", "NO",
+			"-NSAutomaticInlinePredictionEnabled", "NO",
+		}
+		if err := exec.Command(args[0], args[1:]...).Run(); err == nil {
+			return waitForTextEditDocument(path)
 		}
 	}
 	return EditFile(path)
+}
+
+func waitForTextEditDocument(path string) error {
+	name := filepath.Base(path)
+	script := fmt.Sprintf(`set targetName to %q
+tell application "TextEdit"
+	activate
+	open POSIX file %q
+
+	repeat
+		try
+			set targetOpen to false
+			repeat with d in documents
+				if name of d is targetName then
+					set targetOpen to true
+					exit repeat
+				end if
+			end repeat
+			on error
+			set targetOpen to false
+		end try
+
+		if targetOpen is false then exit repeat
+		delay 0.25
+	end repeat
+
+	try
+		quit
+	end try
+end tell`, name, path)
+
+	if err := exec.Command("/usr/bin/osascript", "-e", script).Run(); err != nil {
+		return fmt.Errorf("wait for TextEdit: %w", err)
+	}
+	return nil
 }
 
 func EditFile(path string) error {
