@@ -182,7 +182,7 @@ func createEditAuthenticate(rc *rclone.Client, provider Provider, options, prefi
 		}
 	}()
 
-if err := validateEditableConfig(configPath); err != nil {
+	if err := validateEditableConfig(configPath); err != nil {
 		return err
 	}
 	for key, value := range prefill {
