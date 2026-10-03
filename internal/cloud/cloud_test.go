@@ -7,13 +7,13 @@ import (
 
 func TestProviderAliases(t *testing.T) {
 	cases := map[string]string{
-		"": "",
-		"google": "1",
-		"gdrive": "1",
-		"s3": "2",
-		"r2": "e",
-		"b2": "3",
-		"dropbox": "4",
+		"":         "",
+		"google":   "1",
+		"gdrive":   "1",
+		"s3":       "2",
+		"r2":       "e",
+		"b2":       "3",
+		"dropbox":  "4",
 		"onedrive": "5",
 	}
 	for input, code := range cases {
