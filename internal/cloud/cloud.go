@@ -73,6 +73,10 @@ func providerFor(value string) (Provider, error) {
 	return Provider{}, fmt.Errorf("unknown cloud provider %q", value)
 }
 
+func ProviderFromString(value string) (Provider, error) {
+	return providerFor(value)
+}
+
 func Setup(rc *rclone.Client, provider Provider) error {
 	if rc.RemoteExists() {
 		return fmt.Errorf("cloud remote %q is already configured; run 'edrive cloud remove' first", remoteName)
