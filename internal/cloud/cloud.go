@@ -155,6 +155,7 @@ func setupGoogle(rc *rclone.Client, provider Provider) error {
 	if (clientID == "") != (clientSecret == "") {
 		return fmt.Errorf("Google client ID and client secret must both be provided, or both left empty")
 	}
+	fmt.Println("Note: Google OAuth apps left in Testing can have grants expire after 7 days; reconfigure the cloud provider when that happens.")
 
 	configPath, err := rc.ConfigFile()
 	if err != nil {
