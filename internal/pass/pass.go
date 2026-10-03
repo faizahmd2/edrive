@@ -9,25 +9,9 @@ import (
 )
 
 func Get(workspace, name string) (string, error) {
-	path, err := entryPath(workspace, name)
+	value, err := ReadText(workspace, name)
 	if err != nil {
 		return "", err
-	}
-
-	info, err := os.Lstat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("pass entry %q does not exist", name)
-		}
-		return "", fmt.Errorf("read pass entry %q: %w", name, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("pass entry %q is not a regular file", name)
-	}
-
-	value, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read pass entry %q: %w", name, err)
 	}
 	if len(value) == 0 {
 		return "", fmt.Errorf("pass entry %q is empty", name)
@@ -40,6 +24,28 @@ func Get(workspace, name string) (string, error) {
 	}
 	if len(value) == 0 {
 		return "", fmt.Errorf("pass entry %q is empty", name)
+	}
+	return value, nil
+}
+
+func ReadText(workspace, name string) (string, error) {
+	path, err := entryPath(workspace, name)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("pass entry %q does not exist", name)
+		}
+		return "", fmt.Errorf("read pass entry %q: %w", name, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("pass entry %q is not a regular file", name)
+	}
+	value, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read pass entry %q: %w", name, err)
 	}
 	return string(value), nil
 }
