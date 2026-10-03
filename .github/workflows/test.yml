@@ -6,7 +6,6 @@ on:
       - master
       - feature/setup-foundation
       - feature/pass-cloud-help
-      - feature/pass-diff
   pull_request:
     branches:
       - master
