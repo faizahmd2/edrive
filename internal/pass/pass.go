@@ -144,5 +144,15 @@ func entryPath(workspace, name string) (string, error) {
 	if name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
 		return "", fmt.Errorf("invalid pass name %q", name)
 	}
-	return filepath.Join(workspace, "pass", name), nil
+
+	dir := filepath.Join(workspace, "pass")
+	legacy := filepath.Join(dir, name)
+	text := filepath.Join(dir, name+".txt")
+	if info, err := os.Stat(legacy); err == nil && info.Mode().IsRegular() {
+		return legacy, nil
+	}
+	if info, err := os.Stat(text); err == nil && info.Mode().IsRegular() {
+		return text, nil
+	}
+	return text, nil
 }
