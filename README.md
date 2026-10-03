@@ -134,13 +134,13 @@ e) Cloudflare R2
 
 The provider configuration is prepared in the real rclone configuration file. edrive opens that file in a terminal editor, waits for the edit to finish, validates the resulting provider, and then completes OAuth in the browser when the provider uses OAuth.
 
-For Google Drive, edrive optionally accepts your own client ID and client secret. Press Enter for both to use rclone's shared/public client. Rclone currently documents that its shared Google client is being retired during 2026, so an own client avoids that dependency. urlrclone Google Drive configurationhttps://rclone.org/drive/
+For Google Drive, edrive optionally accepts your own client ID and client secret. Press Enter for both to use rclone's shared/public client. Rclone currently documents that its shared Google client is being retired during 2026, so an own client avoids that dependency. [rclone Google Drive configuration](https://rclone.org/drive/)
 
-For Cloudflare R2, edrive can pre-fill the endpoint from the account ID. Rclone configures R2 through its S3 backend using the Cloudflare provider. urlrclone S3 and Cloudflare R2 configurationhttps://rclone.org/s3/
+For Cloudflare R2, edrive can pre-fill the endpoint from the account ID. Rclone configures R2 through its S3 backend using the Cloudflare provider. [rclone S3 and Cloudflare R2 configuration](https://rclone.org/s3/)
 
-Dropbox and OneDrive finish through browser OAuth after the editor step. urlrclone Dropbox configurationhttps://rclone.org/dropbox/ urlrclone OneDrive configurationhttps://rclone.org/onedrive/
+Dropbox and OneDrive finish through browser OAuth after the editor step. [rclone Dropbox configuration](https://rclone.org/dropbox/) [rclone OneDrive configuration](https://rclone.org/onedrive/)
 
-The guided editor method requires the rclone configuration file to be plaintext because it edits that file directly. If your rclone configuration file is encrypted, use the built-in rclone setup instead. Rclone supports encrypted configuration separately. urlrclone configuration encryptionhttps://rclone.org/docs/#configuration-encryption
+The guided editor method requires the rclone configuration file to be plaintext because it edits that file directly. If your rclone configuration file is encrypted, use the built-in rclone setup instead. Rclone supports encrypted configuration separately. [rclone configuration encryption](https://rclone.org/docs/#configuration-encryption)
 
 After cloud setup, the fixed remote remains:
 
