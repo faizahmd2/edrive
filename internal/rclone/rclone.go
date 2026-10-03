@@ -2,6 +2,8 @@ package rclone
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -117,6 +119,84 @@ func (c *Client) Authorize(backend string, credentials ...string) (string, error
 		return "", err
 	}
 	return token, nil
+}
+
+func extractAuthorizeToken(output string) (string, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return "", fmt.Errorf("rclone authorization completed without returning a token")
+	}
+
+	if token := extractTokenJSON(output); token != "" {
+		return token, nil
+	}
+
+	if start := strings.Index(output, "--->"); start >= 0 {
+		if end := strings.Index(output[start+4:], "<---"); end >= 0 {
+			candidate := strings.TrimSpace(output[start+4 : start+4+end])
+			if token := decodeAuthorizeBlob(candidate); token != "" {
+				return token, nil
+			}
+		}
+	}
+
+	if token := decodeAuthorizeBlob(strings.Join(strings.Fields(output), "")); token != "" {
+		return token, nil
+	}
+
+	return "", fmt.Errorf("rclone authorization completed but did not return a usable OAuth token")
+}
+
+func extractTokenJSON(output string) string {
+	start := strings.Index(output, "{")
+	end := strings.LastIndex(output, "}")
+	if start < 0 || end <= start {
+		return ""
+	}
+
+	candidate := strings.TrimSpace(output[start : end+1])
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(candidate), &fields); err != nil {
+		return ""
+	}
+	if _, ok := fields["access_token"]; ok {
+		return candidate
+	}
+	if _, ok := fields["refresh_token"]; ok {
+		return candidate
+	}
+	if raw, ok := fields["token"]; ok {
+		var nested string
+		if json.Unmarshal(raw, &nested) == nil {
+			if token := extractTokenJSON(nested); token != "" {
+				return token
+			}
+		}
+	}
+	return ""
+}
+
+func decodeAuthorizeBlob(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	for _, encoding := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		decoded, err := encoding.DecodeString(value)
+		if err != nil {
+			continue
+		}
+		if token := extractTokenJSON(string(decoded)); token != "" {
+			return token
+		}
+	}
+	return ""
 }
 
 func (c *Client) DeleteRemote() error {
