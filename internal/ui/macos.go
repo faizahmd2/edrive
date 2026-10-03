@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -63,6 +64,19 @@ func ReadSecret(prompt string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
+}
+
+func EditTextFile(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("path is required")
+	}
+	if runtime.GOOS == "darwin" {
+		cmd := exec.Command("/usr/bin/open", "-W", "-a", "TextEdit", filepath.Clean(path))
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+	}
+	return EditFile(path)
 }
 
 func EditFile(path string) error {
