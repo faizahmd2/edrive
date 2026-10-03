@@ -103,7 +103,7 @@ func (a App) Doctor() error {
 	if path := resolveToolPath("", "rclone"); path != "" {
 		a.check(true, "rclone", path)
 		rc, _ := rclone.New(path, config.RcloneRemote, config.RemoteVault)
-		if err := rc.EnsureConfigured(); err != nil {
+		if err := rc.CheckConfigured(); err != nil {
 			a.check(false, "cloud login", err.Error())
 			problems = append(problems, "Run 'edrive setup' to authenticate the rclone remote.")
 		} else {
