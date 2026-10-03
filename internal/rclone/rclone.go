@@ -97,6 +97,28 @@ func (c *Client) CreateRemote(remoteType string, options map[string]string) erro
 	return nil
 }
 
+func (c *Client) Authorize(backend string, credentials ...string) (string, error) {
+	if strings.TrimSpace(backend) == "" {
+		return "", fmt.Errorf("rclone authorization backend is required")
+	}
+	args := []string{"authorize", backend}
+	args = append(args, credentials...)
+
+	var stdout bytes.Buffer
+	cmd := exec.Command(c.Path, args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("authorize rclone %q: %w", backend, err)
+	}
+
+	token, err := extractAuthorizeToken(stdout.String())
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
 func (c *Client) DeleteRemote() error {
 	cmd := exec.Command(c.Path, "config", "delete", c.RemoteName)
 	cmd.Stdout = io.Discard
