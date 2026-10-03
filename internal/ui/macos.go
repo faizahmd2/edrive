@@ -39,6 +39,33 @@ func Confirm(prompt string) (bool, error) {
 	}
 }
 
+func ReadLine(prompt string) (string, error) {
+	fmt.Print(prompt)
+	line, err := input.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+func EditFile(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("path is required")
+	}
+	for _, name := range []string{"nvim", "vim", "vi"} {
+		editor, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(editor, filepath.Clean(path))
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+	return fmt.Errorf("no terminal editor found; install neovim/vim or use the macOS-provided vi")
+}
+
 func Pause(prompt string) error {
 	fmt.Print(prompt)
 	_, err := input.ReadString('\n')
