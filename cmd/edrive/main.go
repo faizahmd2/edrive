@@ -62,6 +62,8 @@ func main() {
 			run(command, a.Pull)
 		case "backup":
 			run(command, a.Backup)
+		case "pwd":
+			run(command, a.Pwd)
 		case "device":
 			run(command, func() error {
 				return a.Device(os.Args[2:])

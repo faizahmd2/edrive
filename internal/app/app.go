@@ -202,6 +202,17 @@ func (a App) Open() error {
 	return ui.Open(config.WorkspacePath())
 }
 
+func (a App) Pwd() error {
+	if err := a.requireConfigured(); err != nil {
+		return err
+	}
+	if err := a.ensureUnlocked(); err != nil {
+		return err
+	}
+	fmt.Println(config.WorkspacePath())
+	return nil
+}
+
 func (a App) Lock() error {
 	if err := a.requireConfigured(); err != nil {
 		return err
