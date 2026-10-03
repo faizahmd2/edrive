@@ -87,14 +87,16 @@ func (a App) passSetEditor(name string) error {
 		return fmt.Errorf("protect pass editor file: %w", err)
 	}
 
-	if existing, err := pass.ReadText(config.WorkspacePath(), name); err == nil {
+	if pass.Exists(config.WorkspacePath(), name) {
+		existing, err := pass.ReadText(config.WorkspacePath(), name)
+		if err != nil {
+			_ = tmp.Close()
+			return err
+		}
 		if _, err := tmp.WriteString(existing); err != nil {
 			_ = tmp.Close()
 			return fmt.Errorf("seed pass editor file: %w", err)
 		}
-	} else if !strings.Contains(err.Error(), "does not exist") {
-		_ = tmp.Close()
-		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close pass editor file: %w", err)
