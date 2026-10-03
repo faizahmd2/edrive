@@ -72,3 +72,17 @@ func TestSetTextAllowsMultiline(t *testing.T) {
 		t.Fatalf("value=%q", got)
 	}
 }
+
+func TestReadTextPreservesNewline(t *testing.T) {
+	workspace := t.TempDir()
+	if err := SetText(workspace, "note", "line one\nline two\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadText(workspace, "note")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "line one\nline two\n" {
+		t.Fatalf("value=%q", got)
+	}
+}
