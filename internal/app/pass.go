@@ -18,6 +18,24 @@ func (a App) Pass(args []string) error {
 	}
 
 	switch {
+	case len(args) == 1 && strings.EqualFold(strings.TrimSpace(args[0]), "migrate"):
+		if err := keychain.UnlockDefault(); err != nil {
+			return fmt.Errorf("unlock macOS Keychain before changing pass entries: %w", err)
+		}
+		if err := a.ensureUnlocked(); err != nil {
+			return err
+		}
+		count, err := pass.Migrate(config.WorkspacePath())
+		if err != nil {
+			return err
+		}
+		if count == 1 {
+			fmt.Println("Migrated 1 pass entry to .txt.")
+		} else {
+			fmt.Printf("Migrated %d pass entries to .txt.\n", count)
+		}
+		return nil
+
 	case len(args) == 1 && isPassListCommand(args[0]):
 		if err := a.ensureUnlocked(); err != nil {
 			return err
