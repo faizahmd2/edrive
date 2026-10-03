@@ -45,15 +45,26 @@ func Get(workspace, name string) (string, error) {
 }
 
 func Set(workspace, name, value string) error {
-	path, err := entryPath(workspace, name)
-	if err != nil {
-		return err
-	}
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("pass value cannot be empty")
 	}
 	if strings.ContainsAny(value, "\r\n") {
 		return fmt.Errorf("pass value must be a single line")
+	}
+	return setText(workspace, name, value)
+}
+
+func SetText(workspace, name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("pass value cannot be empty")
+	}
+	return setText(workspace, name, value)
+}
+
+func setText(workspace, name, value string) error {
+	path, err := entryPath(workspace, name)
+	if err != nil {
+		return err
 	}
 
 	dir := filepath.Dir(path)
