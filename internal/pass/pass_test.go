@@ -57,3 +57,18 @@ func TestList(t *testing.T) {
 		t.Fatalf("names=%v", names)
 	}
 }
+
+func TestSetTextAllowsMultiline(t *testing.T) {
+	workspace := t.TempDir()
+	value := "line one\nline two\nline three"
+	if err := SetText(workspace, "certificate", value); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get(workspace, "certificate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != value {
+		t.Fatalf("value=%q", got)
+	}
+}
