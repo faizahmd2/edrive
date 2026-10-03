@@ -93,34 +93,7 @@ func Run() error {
 }
 
 func configureCloud(rc *rclone.Client) error {
-	if rc.RemoteExists() {
-		return rc.EnsureConfigured()
-	}
-
-	fmt.Println("No cloud provider is configured for edrive.")
-	fmt.Println("Choose how to configure the fixed edrive-cloud remote:")
-	fmt.Println("  1) Built-in rclone setup")
-	fmt.Println("  2) edrive guided setup")
-	method, err := ui.ReadLine("Choose setup method [1]: ")
-	if err != nil {
-		return err
-	}
-	if method == "" {
-		method = "1"
-	}
-
-	switch method {
-	case "1":
-		return rc.EnsureConfigured()
-	case "2":
-		provider, err := cloud.PromptProvider()
-		if err != nil {
-			return err
-		}
-		return cloud.Setup(rc, provider)
-	default:
-		return fmt.Errorf("unknown setup method %q; choose 1 or 2", method)
-	}
+	return cloud.EnsureConfigured(rc)
 }
 
 func ensureWorkspace() error {
