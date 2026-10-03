@@ -151,16 +151,58 @@ func setupGoogle(rc *rclone.Client, provider Provider) error {
 		return fmt.Errorf("Google client ID and client secret must both be provided, or both left empty")
 	}
 
+	configPath, err := rc.ConfigFile()
+	if err != nil {
+		return err
+	}
+	if err := validateExistingConfig(configPath); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("Opening Google authorization in your browser...")
+	var credentials []string
+	if clientID != "" {
+		credentials = []string{clientID, clientSecret}
+	}
+	token, err := rc.Authorize(provider.RcloneType, credentials...)
+	if err != nil {
+		return err
+	}
+
 	options := map[string]string{
 		"scope":           "drive",
 		"config_is_local": "true",
 	}
-	prefill := map[string]string{}
 	if clientID != "" {
-		prefill["client_id"] = clientID
-		prefill["client_secret"] = clientSecret
+		options["client_id"] = clientID
+		options["client_secret"] = clientSecret
 	}
-	return createEditAuthenticate(rc, provider, options, prefill)
+	if err := rc.CreateRemote(provider.RcloneType, options); err != nil {
+		return err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = rc.DeleteRemote()
+		}
+	}()
+
+	if err := validateEditableConfig(configPath); err != nil {
+		return err
+	}
+	if err := PatchValue(configPath, remoteName, "token", token); err != nil {
+		return fmt.Errorf("save Google OAuth token: %w", err)
+	}
+	if err := rc.CheckConfigured(); err != nil {
+		return err
+	}
+
+	cleanup = false
+	fmt.Println()
+	fmt.Println("Cloud provider configured:", provider.Name)
+	fmt.Println("Rclone config saved:", configPath)
+	return nil
 }
 
 func setupS3(rc *rclone.Client, provider Provider) error {
