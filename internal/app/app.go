@@ -366,10 +366,6 @@ func (a App) ensureUnlocked() error {
 	if err != nil {
 		return fmt.Errorf("the edrive vault is not registered in Cryptomator; run 'edrive setup'")
 	}
-	if !cryptomator.CredentialAvailable(vaultID) {
-		return fmt.Errorf("Cryptomator does not have the vault password in Keychain; unlock it once in Cryptomator and enable 'Remember password'")
-	}
-
 	client := cryptomator.New(cryptomator.Config{
 		VaultPath:  vaultPath,
 		VaultID:    vaultID,

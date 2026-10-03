@@ -47,6 +47,8 @@ edrive push
 edrive pull
 
 edrive backup
+edrive pass <name> [value]
+edrive diff
 edrive decode <encrypted-file> <recovery-key>
 
 edrive remove
@@ -69,6 +71,7 @@ Everything owned by edrive lives under:
 ~/.edrive/
 ├── config.json
 ├── workspace/       # plaintext mount point
+│   └── pass/        # one secret per file; names are the keys
 ├── vault/           # local Cryptomator encrypted vault
 ├── backups/         # independent recovery backups
 ├── devices.json
@@ -204,6 +207,64 @@ work
 
 Do not run push or pull while the Cryptomator mount is active.
 
+## Pass
+
+The `pass` command is deliberately only a thin convention over files in the encrypted workspace. It is not a separate password database and it does not use another encryption layer.
+
+The files live at:
+
+~~~text
+~/.edrive/workspace/pass/
+├── insta
+├── github
+└── aws
+~~~
+
+Each file contains one single-line secret value.
+
+Read a value:
+
+~~~bash
+edrive pass insta
+~~~
+
+Set a value:
+
+~~~bash
+edrive pass insta "new-password"
+~~~
+
+Reading requires the workspace to be unlocked. Setting first unlocks the macOS Keychain so that the existing Cryptomator Keychain credential can be used without an unnecessary second Keychain-unlock prompt, then writes the file with mode `0600`.
+
+The pass files are protected by Cryptomator together with the rest of the workspace. They are not separately stored in `config.json` or in edrive's own Keychain namespace.
+
+## Diff
+
+`edrive diff` is a read-only comparison between the local encrypted Cryptomator vault and the configured remote vault.
+
+~~~bash
+edrive diff
+~~~
+
+It compares:
+
+~~~text
+~/.edrive/vault/
+        vs
+edrive-cloud:edrive
+~~~
+
+The comparison uses `rclone check --checksum --combined` and reports only differences:
+
+~~~text
++ path    present locally only
+- path    present remotely only
+* path    present on both sides but different
+! path    comparison error
+~~~
+
+Unchanged files are omitted. The command does not create the remote directory, reconnect the rclone account, upload, download, or modify either side. Run it with the workspace locked so Cryptomator is not changing the local encrypted vault while it is being inspected.
+
 ## Recovery backup
 
 The live cloud vault and recovery backup are separate.
@@ -312,3 +373,8 @@ Cryptomator CLI itself is distributed separately from the desktop application an
 - age and zstd are only for independent recovery backups.
 - Setup never deletes remote vault data.
 - Remove never deletes remote vault data, recovery backups, or Keychain identities.
+
+
+## Open and Keychain authentication
+
+The normal `edrive open` path reads the existing Cryptomator vault password from the macOS Keychain once and supplies it to Cryptomator CLI through stdin. edrive does not intentionally prompt four times. The unlock flow avoids a separate credential-existence lookup immediately before retrieving the same password, reducing duplicate Keychain access.

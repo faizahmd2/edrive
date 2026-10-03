@@ -2,6 +2,7 @@ package keychain
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -44,6 +45,17 @@ func RecoveryExists() bool {
 
 func DeleteRecovery() error {
 	return remove(recoveryAccount)
+}
+
+func UnlockDefault() error {
+	cmd := exec.Command("/usr/bin/security", "unlock-keychain")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("unlock default macOS Keychain: %w", err)
+	}
+	return nil
 }
 
 func get(account string) (string, error) {

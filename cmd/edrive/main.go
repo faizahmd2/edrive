@@ -10,7 +10,7 @@ import (
 	"github.com/faizahmd2/edrive/internal/setup"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -62,6 +62,12 @@ func main() {
 			run(command, a.Pull)
 		case "backup":
 			run(command, a.Backup)
+		case "pass":
+			run(command, func() error {
+				return a.Pass(os.Args[2:])
+			})
+		case "diff":
+			run(command, a.Diff)
 		case "pwd":
 			run(command, a.Pwd)
 		case "device":
@@ -100,6 +106,8 @@ func printHelp() {
 	fmt.Println("  edrive push")
 	fmt.Println("  edrive pull")
 	fmt.Println("  edrive backup")
+	fmt.Println("  edrive pass <name> [value]")
+	fmt.Println("  edrive diff")
 	fmt.Println("  edrive decode <encrypted-file> <recovery-key>")
 	fmt.Println("  edrive remove")
 	fmt.Println("  edrive device add <label>")

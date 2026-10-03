@@ -67,6 +67,84 @@ func (c *Client) EnsureConfigured() error {
 	return nil
 }
 
+func (c *Client) CheckConfigured() error {
+	if !c.remoteExists() {
+		return fmt.Errorf("rclone remote %q is not configured; run 'edrive setup'", c.RemoteName)
+	}
+	if err := c.probe(); err != nil {
+		return fmt.Errorf("rclone remote %q is unavailable; run 'edrive setup' to authenticate it", c.RemoteName)
+	}
+	return nil
+}
+
+func (c *Client) Diff(localVault string) (string, error) {
+	if err := requireDirectory(localVault); err != nil {
+		return "", err
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := exec.Command(c.Path, "check", "--checksum", "--combined", "-", localVault, c.Remote())
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	output := strings.TrimSpace(stdout.String())
+	if output == "" && runErr != nil {
+		return "", fmt.Errorf("compare encrypted vaults: %s", compactOutput(stderr.Bytes(), runErr))
+	}
+
+	var lines []string
+	var mismatches int
+	var errors int
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		status := parts[0]
+		path := parts[1]
+		switch status {
+		case "=":
+			continue
+		case "+":
+			lines = append(lines, "+ "+path)
+			mismatches++
+		case "-":
+			lines = append(lines, "- "+path)
+			mismatches++
+		case "*":
+			lines = append(lines, "* "+path)
+			mismatches++
+		case "!":
+			lines = append(lines, "! "+path)
+			errors++
+		}
+	}
+
+	if errors > 0 {
+		return "", fmt.Errorf("compare encrypted vaults found %d error(s):\n%s", errors, strings.Join(lines, "\n"))
+	}
+	if runErr != nil && len(lines) == 0 {
+		return "", fmt.Errorf("compare encrypted vaults: %s", compactOutput(stderr.Bytes(), runErr))
+	}
+
+	if mismatches == 0 {
+		return "No differences.\n", nil
+	}
+
+	var summary strings.Builder
+	summary.WriteString("Differences:\n")
+	summary.WriteString(strings.Join(lines, "\n"))
+	summary.WriteString("\n\n")
+	summary.WriteString(fmt.Sprintf("%d difference(s).\n", mismatches))
+	return summary.String(), nil
+}
+
 func (c *Client) EnsureRemoteDir() error {
 	cmd := exec.Command(c.Path, "mkdir", c.Remote())
 	if out, err := cmd.CombinedOutput(); err != nil {
