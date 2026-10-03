@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/faizahmd2/edrive/internal/ageutil"
+	"github.com/faizahmd2/edrive/internal/cloud"
 	"github.com/faizahmd2/edrive/internal/config"
 	"github.com/faizahmd2/edrive/internal/cryptomator"
 	"github.com/faizahmd2/edrive/internal/deps"
@@ -51,7 +52,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	if err := rc.EnsureConfigured(); err != nil {
+	if err := configureCloud(rc); err != nil {
 		return err
 	}
 	if err := rc.EnsureRemoteDir(); err != nil {
@@ -89,6 +90,10 @@ func Run() error {
 	fmt.Println("  edrive pull")
 	fmt.Println("  edrive backup")
 	return nil
+}
+
+func configureCloud(rc *rclone.Client) error {
+	return cloud.EnsureConfigured(rc)
 }
 
 func ensureWorkspace() error {

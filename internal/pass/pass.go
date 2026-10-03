@@ -9,25 +9,9 @@ import (
 )
 
 func Get(workspace, name string) (string, error) {
-	path, err := entryPath(workspace, name)
+	value, err := ReadText(workspace, name)
 	if err != nil {
 		return "", err
-	}
-
-	info, err := os.Lstat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("pass entry %q does not exist", name)
-		}
-		return "", fmt.Errorf("read pass entry %q: %w", name, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("pass entry %q is not a regular file", name)
-	}
-
-	value, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read pass entry %q: %w", name, err)
 	}
 	if len(value) == 0 {
 		return "", fmt.Errorf("pass entry %q is empty", name)
@@ -41,19 +25,61 @@ func Get(workspace, name string) (string, error) {
 	if len(value) == 0 {
 		return "", fmt.Errorf("pass entry %q is empty", name)
 	}
+	return value, nil
+}
+
+func Exists(workspace, name string) bool {
+	path, err := entryPath(workspace, name)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func ReadText(workspace, name string) (string, error) {
+	path, err := entryPath(workspace, name)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("pass entry %q does not exist", name)
+		}
+		return "", fmt.Errorf("read pass entry %q: %w", name, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("pass entry %q is not a regular file", name)
+	}
+	value, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read pass entry %q: %w", name, err)
+	}
 	return string(value), nil
 }
 
 func Set(workspace, name, value string) error {
-	path, err := entryPath(workspace, name)
-	if err != nil {
-		return err
-	}
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("pass value cannot be empty")
 	}
 	if strings.ContainsAny(value, "\r\n") {
 		return fmt.Errorf("pass value must be a single line")
+	}
+	return setText(workspace, name, value)
+}
+
+func SetText(workspace, name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("pass value cannot be empty")
+	}
+	return setText(workspace, name, value)
+}
+
+func setText(workspace, name, value string) error {
+	path, err := entryPath(workspace, name)
+	if err != nil {
+		return err
 	}
 
 	dir := filepath.Dir(path)
@@ -104,7 +130,20 @@ func List(workspace string) ([]string, error) {
 		if !entry.Type().IsRegular() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		names = append(names, entry.Name())
+		name := entry.Name()
+		if strings.HasSuffix(name, ".txt") {
+			name = strings.TrimSuffix(name, ".txt")
+		}
+		alreadyListed := false
+		for _, existing := range names {
+			if existing == name {
+				alreadyListed = true
+				break
+			}
+		}
+		if !alreadyListed {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names)
 	return names, nil
@@ -118,5 +157,15 @@ func entryPath(workspace, name string) (string, error) {
 	if name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
 		return "", fmt.Errorf("invalid pass name %q", name)
 	}
-	return filepath.Join(workspace, "pass", name), nil
+
+	dir := filepath.Join(workspace, "pass")
+	legacy := filepath.Join(dir, name)
+	text := filepath.Join(dir, name+".txt")
+	if info, err := os.Stat(legacy); err == nil && info.Mode().IsRegular() {
+		return legacy, nil
+	}
+	if info, err := os.Stat(text); err == nil && info.Mode().IsRegular() {
+		return text, nil
+	}
+	return text, nil
 }

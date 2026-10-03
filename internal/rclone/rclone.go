@@ -2,11 +2,14 @@ package rclone
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -65,6 +68,197 @@ func (c *Client) EnsureConfigured() error {
 		return fmt.Errorf("rclone remote %q is still unavailable: %w", c.RemoteName, err)
 	}
 	return nil
+}
+
+func (c *Client) RemoteExists() bool {
+	return c.remoteExists()
+}
+
+func (c *Client) CreateRemote(remoteType string, options map[string]string) error {
+	if remoteType == "" {
+		return fmt.Errorf("rclone remote type is required")
+	}
+	args := []string{"config", "create", c.RemoteName, remoteType}
+	keys := make([]string, 0, len(options))
+	for key := range options {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		args = append(args, key, options[key])
+	}
+	args = append(args, "--non-interactive")
+
+	cmd := exec.Command(c.Path, args...)
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("create rclone remote %q: %s", c.RemoteName, compactOutput(stderr.Bytes(), err))
+	}
+	return nil
+}
+
+func (c *Client) Authorize(backend string, credentials ...string) (string, error) {
+	if strings.TrimSpace(backend) == "" {
+		return "", fmt.Errorf("rclone authorization backend is required")
+	}
+	args := []string{"authorize", backend}
+	args = append(args, credentials...)
+
+	var stdout bytes.Buffer
+	cmd := exec.Command(c.Path, args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("authorize rclone %q: %w", backend, err)
+	}
+
+	token, err := extractAuthorizeToken(stdout.String())
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func extractAuthorizeToken(output string) (string, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return "", fmt.Errorf("rclone authorization completed without returning a token")
+	}
+
+	if token := extractTokenJSON(output); token != "" {
+		return token, nil
+	}
+
+	if start := strings.Index(output, "--->"); start >= 0 {
+		if end := strings.Index(output[start+4:], "<---"); end >= 0 {
+			candidate := strings.Join(strings.Fields(output[start+4:start+4+end]), "")
+			if token := decodeAuthorizeBlob(candidate); token != "" {
+				return token, nil
+			}
+		}
+	}
+
+	if token := decodeAuthorizeBlob(strings.Join(strings.Fields(output), "")); token != "" {
+		return token, nil
+	}
+
+	return "", fmt.Errorf("rclone authorization completed but did not return a usable OAuth token")
+}
+
+func extractTokenJSON(output string) string {
+	start := strings.Index(output, "{")
+	end := strings.LastIndex(output, "}")
+	if start < 0 || end <= start {
+		return ""
+	}
+
+	candidate := strings.TrimSpace(output[start : end+1])
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(candidate), &fields); err != nil {
+		return ""
+	}
+	if _, ok := fields["access_token"]; ok {
+		return candidate
+	}
+	if _, ok := fields["refresh_token"]; ok {
+		return candidate
+	}
+	if raw, ok := fields["token"]; ok {
+		var nested string
+		if json.Unmarshal(raw, &nested) == nil {
+			if token := extractTokenJSON(nested); token != "" {
+				return token
+			}
+		}
+	}
+	return ""
+}
+
+func decodeAuthorizeBlob(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	for _, encoding := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		decoded, err := encoding.DecodeString(value)
+		if err != nil {
+			continue
+		}
+		if token := extractTokenJSON(string(decoded)); token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+func (c *Client) DeleteRemote() error {
+	cmd := exec.Command(c.Path, "config", "delete", c.RemoteName)
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("delete rclone remote %q: %s", c.RemoteName, compactOutput(stderr.Bytes(), err))
+	}
+	return nil
+}
+
+func (c *Client) Reconnect() error {
+	return c.interactive("config", "reconnect", c.RemoteName+":")
+}
+
+func (c *Client) ConfigFile() (string, error) {
+	out, err := c.output("config", "file")
+	if err != nil {
+		return "", fmt.Errorf("find rclone configuration file: %s", compactOutput(out, err))
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" && !strings.HasPrefix(line, "Configuration file") {
+			return line, nil
+		}
+	}
+	return "", fmt.Errorf("rclone did not report its configuration file")
+}
+
+func (c *Client) RemoteIdentity() (string, string, error) {
+	out, err := c.output("config", "redacted", c.RemoteName)
+	if err != nil {
+		return "", "", fmt.Errorf("inspect rclone remote: %s", compactOutput(out, err))
+	}
+	var remoteType, backend string
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, ok := splitConfigLine(line)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "type":
+			remoteType = value
+		case "provider":
+			backend = value
+		}
+	}
+	if remoteType == "" {
+		return "", "", fmt.Errorf("rclone remote %q has no type", c.RemoteName)
+	}
+	return remoteType, backend, nil
+}
+
+func splitConfigLine(line string) (string, string, bool) {
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
 }
 
 func (c *Client) CheckConfigured() error {

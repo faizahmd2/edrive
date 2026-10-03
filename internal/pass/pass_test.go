@@ -21,7 +21,7 @@ func TestSetAndGet(t *testing.T) {
 		t.Fatalf("value=%q", value)
 	}
 
-	info, err := os.Stat(filepath.Join(workspace, "pass", "insta"))
+	info, err := os.Stat(filepath.Join(workspace, "pass", "insta.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,5 +55,82 @@ func TestList(t *testing.T) {
 	}
 	if len(names) != 2 || names[0] != "github" || names[1] != "insta" {
 		t.Fatalf("names=%v", names)
+	}
+}
+
+func TestSetTextAllowsMultiline(t *testing.T) {
+	workspace := t.TempDir()
+	value := "line one\nline two\nline three"
+	if err := SetText(workspace, "certificate", value); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get(workspace, "certificate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != value {
+		t.Fatalf("value=%q", got)
+	}
+}
+
+func TestReadTextPreservesNewline(t *testing.T) {
+	workspace := t.TempDir()
+	if err := SetText(workspace, "note", "line one\nline two\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadText(workspace, "note")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "line one\nline two\n" {
+		t.Fatalf("value=%q", got)
+	}
+}
+
+func TestLegacyExtensionlessEntryStillWorks(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, "pass")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "legacy"), []byte("old-value"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Get(workspace, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "old-value" {
+		t.Fatalf("value=%q", got)
+	}
+}
+
+func TestMigrateRenamesExtensionlessEntries(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, "pass")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "legacy"), []byte("old-value"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := Migrate(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("count=%d", count)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "legacy")); !os.IsNotExist(err) {
+		t.Fatalf("legacy file still exists")
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "legacy.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old-value" {
+		t.Fatalf("value=%q", got)
 	}
 }

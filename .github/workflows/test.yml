@@ -5,7 +5,7 @@ on:
     branches:
       - master
       - feature/setup-foundation
-      - feature/pass-diff
+      - feature/pass-cloud-help
   pull_request:
     branches:
       - master

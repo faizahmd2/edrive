@@ -7,10 +7,11 @@ import (
 	"github.com/faizahmd2/edrive/internal/app"
 	"github.com/faizahmd2/edrive/internal/config"
 	"github.com/faizahmd2/edrive/internal/decode"
+	"github.com/faizahmd2/edrive/internal/help"
 	"github.com/faizahmd2/edrive/internal/setup"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -19,6 +20,19 @@ func main() {
 	}
 
 	command := os.Args[1]
+
+	if command == "help" || command == "--help" || command == "-h" {
+		if len(os.Args) == 3 && os.Args[2] != "" && !isHelpArg(os.Args[2]) {
+			printCommandHelp(os.Args[2])
+		} else {
+			printHelp()
+		}
+		return
+	}
+	if len(os.Args) >= 3 && isHelpArg(os.Args[len(os.Args)-1]) {
+		printCommandHelp(command)
+		return
+	}
 
 	switch command {
 	case "help", "--help", "-h":
@@ -68,6 +82,10 @@ func main() {
 			})
 		case "diff":
 			run(command, a.Diff)
+		case "cloud":
+			run(command, func() error {
+				return a.Cloud(os.Args[2:])
+			})
 		case "pwd":
 			run(command, a.Pwd)
 		case "device":
@@ -97,34 +115,13 @@ func fail(command string, err error) {
 }
 
 func printHelp() {
-	fmt.Printf("edrive %s - local encrypted workspace with explicit cloud sync\n\n", version)
-	fmt.Println("Usage:")
-	fmt.Println("  edrive setup")
-	fmt.Println("  edrive doctor")
-	fmt.Println("  edrive open")
-	fmt.Println("  edrive lock")
-	fmt.Println("  edrive push")
-	fmt.Println("  edrive pull")
-	fmt.Println("  edrive backup")
-	fmt.Println("  edrive pass <name> [value]")
-	fmt.Println("  edrive diff")
-	fmt.Println("  edrive decode <encrypted-file> <recovery-key>")
-	fmt.Println("  edrive remove")
-	fmt.Println("  edrive device add <label>")
-	fmt.Println("  edrive device list")
-	fmt.Println("  edrive device remove <label>")
-	fmt.Println()
-	fmt.Println("Daily flow:")
-	fmt.Println("  edrive open")
-	fmt.Println("  # work in ~/.edrive/workspace")
-	fmt.Println("  edrive lock")
-	fmt.Println("  edrive push")
-	fmt.Println()
-	fmt.Println("Cloud:")
-	fmt.Printf("  rclone remote: %s\n", config.RcloneRemote)
-	fmt.Printf("  remote vault:  %s:%s\n", config.RcloneRemote, config.RemoteVault)
-	fmt.Println()
-	fmt.Println("Recovery:")
-	fmt.Println("  edrive backup")
-	fmt.Println("  edrive decode <backup.tar.zst.age> <recovery-key.txt>")
+	help.PrintAll()
+}
+
+func printCommandHelp(command string) {
+	help.Print(command)
+}
+
+func isHelpArg(value string) bool {
+	return value == "help" || value == "--help" || value == "-h"
 }

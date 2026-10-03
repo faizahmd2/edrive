@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/faizahmd2/edrive/internal/cloud"
 	"github.com/faizahmd2/edrive/internal/config"
 	"github.com/faizahmd2/edrive/internal/cryptomator"
 	"github.com/faizahmd2/edrive/internal/deps"
@@ -102,7 +103,7 @@ func (a App) Doctor() error {
 	if path := resolveToolPath("", "rclone"); path != "" {
 		a.check(true, "rclone", path)
 		rc, _ := rclone.New(path, config.RcloneRemote, config.RemoteVault)
-		if err := rc.EnsureConfigured(); err != nil {
+		if err := rc.CheckConfigured(); err != nil {
 			a.check(false, "cloud login", err.Error())
 			problems = append(problems, "Run 'edrive setup' to authenticate the rclone remote.")
 		} else {
@@ -264,7 +265,7 @@ func (a App) Push() error {
 	if err != nil {
 		return err
 	}
-	if err := rc.EnsureConfigured(); err != nil {
+	if err := cloud.EnsureConfigured(rc); err != nil {
 		return err
 	}
 	if err := rc.EnsureRemoteDir(); err != nil {
@@ -289,7 +290,7 @@ func (a App) Pull() error {
 	if err != nil {
 		return err
 	}
-	if err := rc.EnsureConfigured(); err != nil {
+	if err := cloud.EnsureConfigured(rc); err != nil {
 		return err
 	}
 	if err := rc.EnsureRemoteDir(); err != nil {
