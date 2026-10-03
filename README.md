@@ -11,7 +11,7 @@ Creates independent recovery backups with **age** encryption.
 macOS Apple Silicon:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/faizahmd2/edrive/v0.4.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/faizahmd2/edrive/v0.1.0/install.sh | sh
 ```
 
 The installer downloads the matching GitHub Release binary, installs it under `~/.local/bin`, and adds that directory to your shell PATH.
@@ -99,7 +99,7 @@ During removal, edrive can also uninstall the dependencies it manages. In that s
 
 ## Release
 
-The current release version is `0.4.0`.
+The current release version is `0.1.0`.
 
 Build the Apple Silicon release binary:
 
@@ -118,5 +118,5 @@ Upload that binary to the GitHub Release for the matching tag.
 Then users can install it with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/faizahmd2/edrive/v0.4.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/faizahmd2/edrive/v0.1.0/install.sh | sh
 ```
