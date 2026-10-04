@@ -148,10 +148,11 @@ func setupGoogle(rc *rclone.Client, provider Provider) error {
 	if err != nil {
 		return err
 	}
-	clientSecret, err := ui.ReadSecret("Google client secret [shared]: ")
+	secret, err := ui.ReadSecret("Google client secret [shared]: ")
 	if err != nil {
 		return err
 	}
+	clientSecret := strings.TrimSpace(string(secret))
 	if (clientID == "") != (clientSecret == "") {
 		return fmt.Errorf("Google client ID and client secret must both be provided, or both left empty")
 	}

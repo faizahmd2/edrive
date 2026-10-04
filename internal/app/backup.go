@@ -1,166 +1,136 @@
 package app
 
 import (
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/faizahmd2/edrive/internal/ageutil"
 	"github.com/faizahmd2/edrive/internal/backup"
 	"github.com/faizahmd2/edrive/internal/config"
-	"github.com/faizahmd2/edrive/internal/device"
-	"github.com/faizahmd2/edrive/internal/keychain"
+	"github.com/faizahmd2/edrive/internal/ui"
 )
 
-const recoveryFileName = "edrive-recovery-key.txt"
-
-func (a App) Backup() error {
-	if err := a.requireConfigured(); err != nil {
-		return err
+// Backup writes one standalone, passphrase-encrypted copy of the workspace.
+// It replaces the previous backup; the cloud vault is the live copy.
+func (a App) Backup(args []string) error {
+	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	output := fs.String("o", filepath.Join(config.BackupDir(), "edrive-backup"+backup.Suffix), "")
+	ownPassphrase := fs.Bool("passphrase", false, "")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("usage: edrive backup [-o file] [--passphrase]")
+	}
+	out := config.Expand(*output)
+	if info, err := os.Stat(out); err == nil && info.IsDir() {
+		out = filepath.Join(out, "edrive-backup"+backup.Suffix)
 	}
 
-	agePath, zstdPath, err := a.BackupToolPaths()
+	passphrase, err := choosePassphrase(*ownPassphrase)
 	if err != nil {
 		return err
 	}
 
-	recoveryIdentity, err := ensureRecoveryIdentity(agePath)
-	if err != nil {
-		return err
-	}
-	if err := a.ensureUnlocked(); err != nil {
-		return err
-	}
-
-	destination := config.BackupDir()
-	if err := os.MkdirAll(destination, 0700); err != nil {
-		return fmt.Errorf("create backup directory: %w", err)
-	}
-
-	deviceRecipients, err := device.Recipients()
-	if err != nil {
-		return err
-	}
-	keygenPath, err := ageutil.KeygenPath(agePath)
-	if err != nil {
-		return err
-	}
-	recoveryRecipient, err := ageutil.Recipient(recoveryIdentity, keygenPath, config.TempDir())
-	if err != nil {
-		return err
-	}
-	recipients := append(append([]string{}, deviceRecipients...), recoveryRecipient)
-
-	recoveryPath := filepath.Join(destination, recoveryFileName)
-	exported, err := ensureExportedRecoveryKey(recoveryPath, recoveryIdentity, keygenPath)
+	err = a.withVault("create an edrive backup", false, func() error {
+		if err := os.MkdirAll(filepath.Dir(out), 0700); err != nil {
+			return err
+		}
+		partial := out + ".partial"
+		f, err := os.OpenFile(partial, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		createErr := backup.Create(config.WorkspacePath(), passphrase, f)
+		if createErr == nil {
+			createErr = f.Sync()
+		}
+		closeErr := f.Close()
+		if createErr == nil {
+			createErr = closeErr
+		}
+		if createErr != nil {
+			_ = os.Remove(partial)
+			return fmt.Errorf("create backup: %w", createErr)
+		}
+		return os.Rename(partial, out)
+	})
 	if err != nil {
 		return err
 	}
 
-	finalPath := filepath.Join(destination, timestampedBackupName())
-	partialPath := finalPath + ".partial"
-	out, err := os.OpenFile(partialPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return fmt.Errorf("create backup file: %w", err)
+	size := ""
+	if info, err := os.Stat(out); err == nil {
+		size = fmt.Sprintf(" (%.1f MB)", float64(info.Size())/1e6)
 	}
+	fmt.Println("Backup saved:", out+size)
+	if !*ownPassphrase {
+		fmt.Println()
+		fmt.Println("Passphrase (shown once, not stored anywhere; save it in your password manager):")
+		fmt.Println()
+		fmt.Println("    " + passphrase)
+		fmt.Println()
+	}
+	fmt.Println("Restore on any Mac:  edrive decode", filepath.Base(out))
+	fmt.Println("Or without edrive:   age -d", filepath.Base(out), "| zstd -d | tar x")
 
-	if err := backup.Create(config.WorkspacePath(), recipients, agePath, zstdPath, out); err != nil {
-		_ = out.Close()
-		_ = os.Remove(partialPath)
-		return err
-	}
-	if err := out.Sync(); err != nil {
-		_ = out.Close()
-		_ = os.Remove(partialPath)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(partialPath)
-		return err
-	}
-	if err := os.Rename(partialPath, finalPath); err != nil {
-		_ = os.Remove(partialPath)
-		return fmt.Errorf("finalize backup: %w", err)
-	}
-
-	fmt.Println()
-	fmt.Println("Backup saved:", finalPath)
-	if exported {
-		fmt.Println("Recovery key saved:", recoveryPath)
-	} else {
-		fmt.Println("Recovery key already exists:", recoveryPath)
+	if _, err := os.Stat(config.LegacyRecoveryKeyPath()); err == nil {
+		fmt.Println()
+		fmt.Println("Note: an old unencrypted recovery key from a previous edrive version is at")
+		fmt.Println("  " + config.LegacyRecoveryKeyPath())
+		fmt.Println("It only opens backups made before this version. Move it into your password manager and delete the file.")
 	}
 	return nil
 }
 
-func ensureRecoveryIdentity(agePath string) (string, error) {
-	if keychain.RecoveryExists() {
-		value, err := keychain.GetRecovery()
-		if err != nil {
-			return "", fmt.Errorf("edrive needs access to its recovery key in the macOS Keychain")
-		}
-		return value, nil
+func choosePassphrase(own bool) (string, error) {
+	if !own {
+		return backup.GeneratePassphrase()
 	}
-
-	fmt.Println("Creating your edrive recovery key in macOS Keychain...")
-	keygenPath, err := ageutil.KeygenPath(agePath)
+	first, err := ui.ReadSecret("Backup passphrase (12+ characters): ")
 	if err != nil {
 		return "", err
 	}
-	value, err := ageutil.GenerateIdentity(keygenPath, config.TempDir())
+	defer ui.Wipe(first)
+	if len(first) < 12 {
+		return "", fmt.Errorf("passphrase must be at least 12 characters")
+	}
+	second, err := ui.ReadSecret("Repeat passphrase: ")
 	if err != nil {
 		return "", err
 	}
-	if err := keychain.SetRecovery(value); err != nil {
-		return "", fmt.Errorf("store the edrive recovery key in macOS Keychain: %w", err)
+	defer ui.Wipe(second)
+	if string(first) != string(second) {
+		return "", fmt.Errorf("passphrases do not match")
 	}
-	return value, nil
+	return string(first), nil
 }
 
-func ensureExportedRecoveryKey(path, identity, keygenPath string) (bool, error) {
-	existing, err := os.ReadFile(path)
-	if err == nil {
-		value := strings.TrimSpace(string(existing))
-		if value == "" {
-			return false, fmt.Errorf("recovery key file is empty: %s", path)
-		}
-		existingRecipient, err := ageutil.Recipient(value, keygenPath, config.TempDir())
-		if err != nil {
-			return false, fmt.Errorf("recovery key file is invalid: %s", path)
-		}
-		currentRecipient, err := ageutil.Recipient(identity, keygenPath, config.TempDir())
-		if err != nil {
-			return false, err
-		}
-		if existingRecipient != currentRecipient {
-			return false, fmt.Errorf("recovery key file belongs to a different edrive recovery key: %s", path)
-		}
-		return false, nil
+// Decode restores a backup. It needs no setup, cloud or Cryptomator.
+func Decode(args []string) error {
+	if len(args) < 1 || len(args) > 2 {
+		return fmt.Errorf("usage: edrive decode <backup-file> [old-recovery-key-file]")
 	}
-	if !os.IsNotExist(err) {
-		return false, err
+	keyFile := ""
+	passphrase := ""
+	if len(args) == 2 {
+		keyFile = args[1]
+	} else {
+		secret, err := ui.ReadSecret("Backup passphrase: ")
+		if err != nil {
+			return err
+		}
+		passphrase = string(secret)
+		ui.Wipe(secret)
 	}
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	ids, err := backup.Identities(passphrase, keyFile)
 	if err != nil {
-		return false, err
+		return err
 	}
-	_, writeErr := f.WriteString(identity + "\n")
-	syncErr := error(nil)
-	if writeErr == nil {
-		syncErr = f.Sync()
+	out, err := backup.Decode(args[0], ids)
+	if err != nil {
+		return err
 	}
-	closeErr := f.Close()
-	if writeErr != nil || syncErr != nil || closeErr != nil {
-		_ = os.Remove(path)
-		if writeErr != nil {
-			return false, writeErr
-		}
-		if syncErr != nil {
-			return false, syncErr
-		}
-		return false, closeErr
-	}
-	return true, nil
+	fmt.Println("Restored to:", out)
+	return nil
 }

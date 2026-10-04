@@ -1,428 +1,216 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/faizahmd2/edrive/internal/cloud"
 	"github.com/faizahmd2/edrive/internal/config"
 	"github.com/faizahmd2/edrive/internal/cryptomator"
-	"github.com/faizahmd2/edrive/internal/deps"
-	"github.com/faizahmd2/edrive/internal/device"
-	"github.com/faizahmd2/edrive/internal/keychain"
+	"github.com/faizahmd2/edrive/internal/macos"
 	"github.com/faizahmd2/edrive/internal/rclone"
 	"github.com/faizahmd2/edrive/internal/ui"
-	"github.com/faizahmd2/edrive/internal/vault"
+	"github.com/faizahmd2/edrive/internal/vaultsync"
 )
 
 type App struct {
-	Config      config.Config
-	ConfigError error
+	Config config.Config
 }
 
-func (a App) Doctor() error {
-	fmt.Println("EDRIVE DOCTOR")
-	fmt.Println()
-
-	var problems []string
-	configReady := a.Config.ConfigFound && a.ConfigError == nil && a.Config.Version == config.CurrentVersion
-
-	if a.ConfigError != nil {
-		a.check(false, "configuration", a.ConfigError.Error())
-		problems = append(problems, "Run 'edrive setup' to rebuild the configuration.")
-	} else if !configReady {
-		a.check(false, "configuration", "not initialized")
-		problems = append(problems, "Run 'edrive setup' to create the configuration.")
-	} else if !fileMode0600(a.Config.ConfigPath) {
-		a.check(false, "configuration", "config file permissions are too open")
-		problems = append(problems, "Run 'edrive setup' to rebuild the configuration.")
-	} else {
-		a.check(true, "configuration", a.Config.ConfigPath)
-	}
-
-	if runtime.GOOS != "darwin" {
-		a.check(false, "platform", "setup currently supports macOS")
-		problems = append(problems, "Run edrive on macOS.")
-	} else {
-		a.check(true, "platform", "macOS")
-	}
-
-	workspace := config.WorkspacePath()
-	vaultPath := config.LocalVaultPath()
-
-	if !isDir(workspace) {
-		a.check(false, "workspace", "not present: "+workspace)
-		if configReady {
-			problems = append(problems, "Run 'edrive setup' to recreate the workspace.")
-		}
-	} else if mounted(workspace) {
-		a.check(true, "workspace", "mounted and available")
-	} else {
-		a.check(true, "workspace", "mount point exists and is ready")
-	}
-
-	state, err := vault.Inspect(vaultPath)
-	if err != nil {
-		a.check(false, "local vault", err.Error())
-		problems = append(problems, "Run 'edrive setup' to repair the local vault.")
-	} else if !state.Exists {
-		a.check(false, "local vault", "not present")
-		problems = append(problems, "Run 'edrive setup' to pull or create the encrypted vault.")
-	} else if !state.Complete {
-		a.check(false, "local vault", "incomplete Cryptomator vault")
-		problems = append(problems, "Run 'edrive setup' to repair the local vault.")
-	} else {
-		a.check(true, "local vault", vaultPath)
-		if _, err := cryptomator.DiscoverVaultID(vaultPath); err != nil {
-			a.check(false, "Cryptomator registration", "vault is not registered on this Mac")
-			problems = append(problems, "Open Cryptomator and add the existing vault, then run 'edrive doctor' again.")
-		} else {
-			a.check(true, "Cryptomator registration", "vault is registered")
-		}
-	}
-
-	if path := resolveToolPath(a.Config.AgePath, "age"); path != "" {
-		a.check(true, "age", path)
-	} else {
-		a.check(false, "age", "not installed")
-		problems = append(problems, "Run 'edrive setup' to install age automatically.")
-	}
-
-	if path := resolveToolPath(a.Config.ZstdPath, "zstd"); path != "" {
-		a.check(true, "zstd", path)
-	} else {
-		a.check(false, "zstd", "not installed")
-		problems = append(problems, "Run 'edrive setup' to install zstd automatically.")
-	}
-
-	if path := resolveToolPath("", "rclone"); path != "" {
-		a.check(true, "rclone", path)
-		rc, _ := rclone.New(path, config.RcloneRemote, config.RemoteVault)
-		if err := rc.CheckConfigured(); err != nil {
-			a.check(false, "cloud login", err.Error())
-			problems = append(problems, "Run 'edrive setup' to authenticate the rclone remote.")
-		} else {
-			a.check(true, "cloud login", config.RcloneRemote)
-		}
-	} else {
-		a.check(false, "rclone", "not installed")
-		problems = append(problems, "Run 'edrive setup' to install rclone automatically.")
-	}
-
-	if path := deps.FindCryptomatorCLI(a.Config.CryptomatorCLI); path != "" {
-		a.check(true, "Cryptomator CLI", path)
-	} else {
-		a.check(false, "Cryptomator CLI", "not installed")
-		problems = append(problems, "Run 'edrive setup' to install Cryptomator CLI automatically.")
-	}
-
-	if deps.FUSEInstalled() {
-		a.check(true, "FUSE-T", "installed")
-	} else {
-		a.check(false, "FUSE-T", "not installed")
-		problems = append(problems, "Run 'edrive setup' to install FUSE-T automatically.")
-	}
-
-	if deps.CryptomatorInstalled() {
-		a.check(true, "Cryptomator app", "installed")
-	} else {
-		a.check(false, "Cryptomator app", "not installed")
-		problems = append(problems, "Run 'edrive setup' to install Cryptomator automatically.")
-	}
-
-	if configReady {
-		devices, err := device.List()
-		switch {
-		case err != nil:
-			a.check(false, "devices", "device registry cannot be read")
-			problems = append(problems, "Run 'edrive setup' to rebuild the device registry.")
-		case len(devices) == 0:
-			a.check(false, "devices", "no device identities are registered")
-			problems = append(problems, "Run 'edrive setup' to create the default device.")
-		default:
-			labels := make([]string, 0, len(devices))
-			ok := true
-			for _, d := range devices {
-				labels = append(labels, d.Label)
-				if _, err := keychain.GetIdentity(d.Label); err != nil {
-					ok = false
-				}
-			}
-			if ok {
-				a.check(true, "devices", strings.Join(labels, ", "))
-			} else {
-				a.check(false, "devices", strings.Join(labels, ", ")+" (Keychain access problem)")
-				problems = append(problems, "Restore the missing device Keychain item or run 'edrive setup'.")
-			}
-		}
-	} else {
-		fmt.Println("devices                  -  not initialized until setup")
-	}
-
-	if keychain.RecoveryExists() {
-		a.check(true, "recovery key", "available in Keychain")
-	} else {
-		fmt.Println("recovery key             -  not created yet (created on first backup)")
-	}
-
-	fmt.Println()
-	if len(problems) == 0 {
-		fmt.Println("Result: READY")
-		return nil
-	}
-
-	fmt.Printf("Problems found: %d\n", len(problems))
-	for i, problem := range problems {
-		fmt.Printf("  %d. %s\n", i+1, problem)
-	}
-	return fmt.Errorf("doctor found %d problem(s)", len(problems))
-}
-
-func (a App) check(ok bool, name, detail string) bool {
-	mark := "✓"
-	if !ok {
-		mark = "✗"
-	}
-	fmt.Printf("%-24s %s  %s\n", name, mark, detail)
-	return ok
-}
-
-func (a App) Open() error {
-	if err := a.requireConfigured(); err != nil {
-		return err
-	}
-	if err := a.ensureUnlocked(); err != nil {
-		return err
-	}
-	fmt.Println("Workspace:", config.WorkspacePath())
-	return ui.Open(config.WorkspacePath())
-}
-
-func (a App) Pwd() error {
-	if err := a.requireConfigured(); err != nil {
-		return err
-	}
-	if err := a.ensureUnlocked(); err != nil {
-		return err
-	}
-	fmt.Println(config.WorkspacePath())
-	return nil
-}
-
-func (a App) Lock() error {
-	if err := a.requireConfigured(); err != nil {
-		return err
-	}
-	workspace := config.WorkspacePath()
-	if !isDir(workspace) {
-		return fmt.Errorf("workspace is missing at %s; run 'edrive setup'", workspace)
-	}
-	if !mounted(workspace) {
-		fmt.Println("Workspace already locked.")
-		return nil
-	}
-
-	cliPath := deps.FindCryptomatorCLI(a.Config.CryptomatorCLI)
-	if cliPath == "" {
-		return fmt.Errorf("Cryptomator CLI is unavailable; run 'edrive setup'")
-	}
-
-	client := cryptomator.New(cryptomator.Config{
-		MountPoint: workspace,
+func (a App) crypto() *cryptomator.Client {
+	return &cryptomator.Client{
 		VaultPath:  config.LocalVaultPath(),
-		CLIPath:    cliPath,
+		MountPoint: config.WorkspacePath(),
+		CLIPath:    cryptomator.CLIPath(config.ToolsDir()),
 		RuntimeDir: config.RuntimeDir(),
-	})
-	if err := client.Lock(); err != nil {
-		return err
 	}
-	fmt.Println("Workspace locked.")
-	return nil
 }
 
-func (a App) Push() error {
-	if err := a.requireConfigured(); err != nil {
-		return err
-	}
-	if mounted(config.WorkspacePath()) {
-		return fmt.Errorf("workspace is unlocked; run 'edrive lock' before push")
-	}
-
-	state, err := vault.Inspect(config.LocalVaultPath())
+func (a App) rclone() (*rclone.Client, error) {
+	path, err := exec.LookPath("rclone")
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("rclone is not installed; run 'edrive setup'")
 	}
-	if !state.Exists || !state.Complete {
-		return fmt.Errorf("local Cryptomator vault is missing or incomplete; run 'edrive setup'")
-	}
-
-	rc, err := a.rcloneClient()
-	if err != nil {
-		return err
-	}
-	if err := cloud.EnsureConfigured(rc); err != nil {
-		return err
-	}
-	if err := rc.EnsureRemoteDir(); err != nil {
-		return err
-	}
-	if err := rc.SyncLocalToRemote(config.LocalVaultPath()); err != nil {
-		return err
-	}
-	fmt.Println("Published encrypted vault.")
-	return nil
+	return rclone.New(path, a.Config.RcloneRemote, a.Config.RclonePath)
 }
 
-func (a App) Pull() error {
-	if err := a.requireConfigured(); err != nil {
-		return err
-	}
-	if mounted(config.WorkspacePath()) {
-		return fmt.Errorf("workspace is unlocked; run 'edrive lock' before pull")
-	}
-
-	rc, err := a.rcloneClient()
-	if err != nil {
-		return err
-	}
-	if err := cloud.EnsureConfigured(rc); err != nil {
-		return err
-	}
-	if err := rc.EnsureRemoteDir(); err != nil {
-		return err
-	}
-	if err := rc.SyncRemoteToLocal(config.LocalVaultPath()); err != nil {
-		return err
-	}
-
-	state, err := vault.Inspect(config.LocalVaultPath())
-	if err != nil {
-		return err
-	}
-	if !state.Complete {
-		return fmt.Errorf("the remote data is not a complete Cryptomator vault")
-	}
-	fmt.Println("Pulled encrypted vault.")
-	return nil
-}
-
-func (a App) BackupToolPaths() (string, string, error) {
-	agePath, err := resolveTool(a.Config.AgePath, "age")
-	if err != nil {
-		return "", "", err
-	}
-	zstdPath, err := resolveTool(a.Config.ZstdPath, "zstd")
-	if err != nil {
-		return "", "", err
-	}
-	return agePath, zstdPath, nil
-}
-
-func (a App) rcloneClient() (*rclone.Client, error) {
-	path := resolveToolPath("", "rclone")
-	if path == "" {
-		return nil, fmt.Errorf("rclone is unavailable; run 'edrive setup'")
-	}
-	return rclone.New(path, config.RcloneRemote, config.RemoteVault)
-}
-
-func (a App) requireConfigured() error {
-	if !a.Config.ConfigFound {
-		return fmt.Errorf("edrive is not set up; run 'edrive setup' first")
-	}
-	if a.Config.Version != config.CurrentVersion {
-		return fmt.Errorf("edrive configuration must be rebuilt; run 'edrive setup'")
-	}
-	return nil
-}
-
-func (a App) ensureUnlocked() error {
-	workspace := config.WorkspacePath()
-	if mounted(workspace) {
-		return nil
-	}
-	if !isDir(workspace) {
-		return fmt.Errorf("workspace is missing at %s; run 'edrive setup'", workspace)
-	}
-
-	vaultPath := config.LocalVaultPath()
-	state, err := vault.Inspect(vaultPath)
-	if err != nil {
-		return err
-	}
-	if !state.Exists || !state.Complete {
-		return fmt.Errorf("local Cryptomator vault is missing or incomplete; run 'edrive setup'")
-	}
-
-	cliPath := deps.FindCryptomatorCLI(a.Config.CryptomatorCLI)
-	if cliPath == "" {
-		return fmt.Errorf("Cryptomator CLI is missing; run 'edrive setup'")
-	}
-	vaultID, err := cryptomator.DiscoverVaultID(vaultPath)
-	if err != nil {
-		return fmt.Errorf("the edrive vault is not registered in Cryptomator; run 'edrive setup'")
-	}
-	client := cryptomator.New(cryptomator.Config{
-		VaultPath:  vaultPath,
-		VaultID:    vaultID,
-		MountPoint: workspace,
-		CLIPath:    cliPath,
-		RuntimeDir: config.RuntimeDir(),
-	})
-	return client.Unlock()
-}
-
-func resolveTool(configured, name string) (string, error) {
-	if path := resolveToolPath(configured, name); path != "" {
-		return path, nil
-	}
-	return "", fmt.Errorf("%s is not installed; run 'edrive setup'", name)
-}
-
-func resolveToolPath(configured, name string) string {
-	if isExecutableFile(configured) {
-		return filepath.Clean(configured)
-	}
-	if path, err := exec.LookPath(name); err == nil && isExecutableFile(path) {
-		return filepath.Clean(path)
-	}
-	return ""
-}
-
-func mounted(path string) bool {
-	if path == "" {
-		return false
-	}
-	out, err := exec.Command("/sbin/mount").Output()
-	if err != nil {
-		out, err = exec.Command("mount").Output()
-		if err != nil {
-			return false
+// syncer returns nil when no cloud is configured (local-only use).
+func (a App) syncer() *vaultsync.Syncer {
+	s := a.quietSyncer()
+	if s != nil {
+		s.Progress = func(label string, done, total int) {
+			// \r redraws the same line, so the counter ticks up in place.
+			fmt.Fprintf(os.Stderr, "\r\033[K  %s %d/%d", label, done, total)
+			if done == total {
+				fmt.Fprintln(os.Stderr)
+			}
 		}
 	}
-	return strings.Contains(string(out), " on "+filepath.Clean(path)+" (")
+	return s
 }
 
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+// quietSyncer is the same, without progress output (for the background guard).
+func (a App) quietSyncer() *vaultsync.Syncer {
+	rc, err := a.rclone()
+	if err != nil || !rc.RemoteExists() {
+		return nil
+	}
+	return &vaultsync.Syncer{
+		RC:         rc,
+		LocalVault: config.LocalVaultPath(),
+		Remote:     a.Config.Remote(),
+		StatePath:  filepath.Join(config.StateDir(), "sync.json"),
+		LocalTrash: config.LocalTrashDir(),
+	}
 }
 
-func isExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
+func (a App) requireSetup() error {
+	if !a.Config.ConfigFound || !macos.KeychainExists(config.KeychainService, config.VaultPasswordAccount) {
+		return fmt.Errorf("edrive is not set up yet; run 'edrive setup'")
+	}
+	return nil
 }
 
-func fileMode0600(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0077 == 0
+func mounted() bool {
+	return cryptomator.Mounted(config.WorkspacePath())
 }
 
-func timestampedBackupName() string {
-	return "edrive-backup-" + time.Now().UTC().Format("20060102-150405") + ".tar.zst.age"
+// withLock serialises commands that mount, unmount or sync, so a background
+// auto-lock never races a command you are running.
+func withLock(fn func() error) error {
+	if err := os.MkdirAll(config.RuntimeDir(), 0700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(config.RuntimeDir(), "edrive.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintln(os.Stderr, "Waiting for another edrive command to finish...")
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			return err
+		}
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
+// unlock mounts the workspace after Touch ID. It reports whether this call
+// did the mounting, so quick commands know to lock again afterwards.
+func (a App) unlock(reason string) (bool, error) {
+	if mounted() {
+		return false, nil
+	}
+	if err := a.requireSetup(); err != nil {
+		return false, err
+	}
+	if err := prepareMountPoint(); err != nil {
+		return false, err
+	}
+	if err := macos.Authenticate(reason); err != nil {
+		if errors.Is(err, macos.ErrCancelled) {
+			return false, fmt.Errorf("cancelled")
+		}
+		return false, err
+	}
+	password, err := macos.KeychainGet(config.KeychainService, config.VaultPasswordAccount)
+	if err != nil {
+		if errors.Is(err, macos.ErrNotFound) {
+			return false, fmt.Errorf("the vault password is not stored yet; run 'edrive setup'")
+		}
+		return false, fmt.Errorf("could not read the vault password from Keychain (%v); if you just updated edrive, choose 'Always Allow' when macOS asks", err)
+	}
+	defer ui.Wipe(password)
+	if err := a.crypto().Unlock(password); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// lock unmounts the workspace. If anything changed, a background sync
+// uploads it; the lock itself never waits for the network.
+func (a App) lock() error {
+	if mounted() {
+		if err := a.crypto().Lock(); err != nil {
+			if errors.Is(err, cryptomator.ErrBusy) {
+				return fmt.Errorf("macOS refused to unmount the workspace even when forced; run 'edrive lock' again")
+			}
+			return err
+		}
+	}
+	clearSession()
+	startBackgroundSync(syncAfterLock)
+	return nil
+}
+
+func describeSync(res vaultsync.Result, err error) string {
+	if err != nil {
+		if errors.Is(err, vaultsync.ErrIncomplete) {
+			return "skipped: " + err.Error() + ". Run 'edrive doctor'."
+		}
+		return "offline or unreachable; your files are safe locally and will sync next time."
+	}
+	var parts []string
+	if res.Uploaded > 0 {
+		parts = append(parts, fmt.Sprintf("%d up", res.Uploaded))
+	}
+	if res.Fetched > 0 {
+		parts = append(parts, fmt.Sprintf("%d down", res.Fetched))
+	}
+	if res.Trashed > 0 {
+		parts = append(parts, fmt.Sprintf("%d moved to trash", res.Trashed))
+	}
+	msg := "up to date."
+	if len(parts) > 0 {
+		msg = "done (" + strings.Join(parts, ", ") + ")."
+	}
+	if res.Plan.Conflicts > 0 {
+		msg += fmt.Sprintf(" %d file(s) changed on two devices; kept the newest, older copy is in trash.", res.Plan.Conflicts)
+	}
+	if res.Plan.HeldDeletions > 0 {
+		msg += fmt.Sprintf(" %d removed file(s) were kept on the other side because a lot disappeared at once; run 'edrive sync --allow-deletes' if that was intended.", res.Plan.HeldDeletions)
+	}
+	return msg
+}
+
+// prepareMountPoint makes sure the workspace folder exists and is empty
+// before mounting. Anything left behind (e.g. a file saved after the vault
+// locked) is moved aside, never deleted.
+func prepareMountPoint() error {
+	ws := config.WorkspacePath()
+	if err := os.MkdirAll(ws, 0700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(ws)
+	if err != nil {
+		return err
+	}
+	var leftovers []os.DirEntry
+	for _, e := range entries {
+		if e.Name() == ".DS_Store" {
+			_ = os.Remove(filepath.Join(ws, e.Name()))
+			continue
+		}
+		leftovers = append(leftovers, e)
+	}
+	if len(leftovers) == 0 {
+		return nil
+	}
+	aside := filepath.Join(config.Home(), "unencrypted-leftovers-"+time.Now().Format("20060102-150405"))
+	if err := os.MkdirAll(aside, 0700); err != nil {
+		return err
+	}
+	for _, e := range leftovers {
+		if err := os.Rename(filepath.Join(ws, e.Name()), filepath.Join(aside, e.Name())); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Note: found unencrypted files in the workspace folder while it was locked.\nMoved them to %s. Copy them back in after the workspace opens.\n", aside)
+	return nil
 }

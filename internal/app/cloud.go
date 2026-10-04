@@ -9,10 +9,6 @@ import (
 )
 
 func (a App) Cloud(args []string) error {
-	if err := a.requireConfigured(); err != nil {
-		return err
-	}
-
 	switch len(args) {
 	case 0:
 		return fmt.Errorf("usage: edrive cloud add [provider] | edrive cloud remove")
@@ -36,7 +32,7 @@ func (a App) Cloud(args []string) error {
 }
 
 func (a App) cloudAdd(providerInput string) error {
-	rc, err := a.rcloneClient()
+	rc, err := a.rclone()
 	if err != nil {
 		return err
 	}
@@ -63,13 +59,12 @@ func (a App) cloudAdd(providerInput string) error {
 
 	fmt.Println()
 	fmt.Println("Cloud provider is ready.")
-	fmt.Println("The local encrypted vault was not uploaded by 'cloud add'.")
-	fmt.Println("Run 'edrive push' to publish it.")
+	fmt.Println("Run 'edrive sync' to upload your vault.")
 	return nil
 }
 
 func (a App) cloudRemove() error {
-	rc, err := a.rcloneClient()
+	rc, err := a.rclone()
 	if err != nil {
 		return err
 	}

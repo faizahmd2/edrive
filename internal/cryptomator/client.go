@@ -1,9 +1,8 @@
 package cryptomator
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,270 +12,201 @@ import (
 	"time"
 )
 
-const (
-	KeychainService = "Cryptomator"
-	Mounter         = "org.cryptomator.frontend.fuse.mount.FuseTMountProvider"
-)
+const Mounter = "org.cryptomator.frontend.fuse.mount.FuseTMountProvider"
 
-type Config struct {
+// ErrBusy means the workspace could not be unmounted because something is
+// still using files inside it.
+var ErrBusy = errors.New("workspace is busy")
+
+type Client struct {
 	VaultPath  string
-	VaultID    string
 	MountPoint string
 	CLIPath    string
 	RuntimeDir string
 }
 
-type Client struct {
-	cfg Config
-}
+func (c *Client) pidPath() string { return filepath.Join(c.RuntimeDir, "cryptomator.pid") }
+func (c *Client) logPath() string { return filepath.Join(c.RuntimeDir, "cryptomator.log") }
 
-func New(cfg Config) *Client {
-	return &Client{cfg: cfg}
-}
-
-func CredentialAvailable(vaultID string) bool {
-	if strings.TrimSpace(vaultID) == "" {
-		return false
+// Unlock mounts the vault. The password goes to the CLI over stdin, never argv.
+func (c *Client) Unlock(password []byte) error {
+	if Mounted(c.MountPoint) {
+		return nil
 	}
-	out, err := exec.Command(
-		"/usr/bin/security",
-		"find-generic-password",
-		"-s", KeychainService,
-		"-a", vaultID,
-		"-w",
-	).Output()
-	return err == nil && strings.TrimSpace(string(out)) != ""
-}
-
-func (c *Client) Unlock() error {
-	if mounted(c.cfg.MountPoint) {
-		return fmt.Errorf("vault already mounted at %s", c.cfg.MountPoint)
+	if !isExecutable(c.CLIPath) {
+		return fmt.Errorf("Cryptomator CLI is missing; run 'edrive setup'")
 	}
-	if c.cfg.VaultPath == "" || c.cfg.MountPoint == "" || c.cfg.CLIPath == "" || c.cfg.RuntimeDir == "" {
-		return fmt.Errorf("Cryptomator is not configured")
+	if err := os.MkdirAll(c.RuntimeDir, 0700); err != nil {
+		return err
 	}
-
-	info, err := os.Stat(c.cfg.VaultPath)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("encrypted workspace is unavailable")
-	}
-	if !isExecutableFile(c.cfg.CLIPath) {
-		return fmt.Errorf("Cryptomator CLI is unavailable")
-	}
-
-	vaultID := c.cfg.VaultID
-	if vaultID == "" {
-		vaultID, err = DiscoverVaultID(c.cfg.VaultPath)
-		if err != nil {
-			return fmt.Errorf("the Cryptomator vault is not registered on this Mac")
-		}
-	}
-	credential, err := cryptomatorCredential(vaultID)
+	logFile, err := os.OpenFile(c.logPath(), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
+	defer logFile.Close()
 
-	if err := os.MkdirAll(c.cfg.RuntimeDir, 0700); err != nil {
-		return fmt.Errorf("create runtime directory: %w", err)
-	}
-
-	cmd := exec.Command(
-		c.cfg.CLIPath,
+	cmd := exec.Command(c.CLIPath,
 		"unlock",
 		"--password:stdin",
 		"--mounter="+Mounter,
-		"--mountPoint="+c.cfg.MountPoint,
-		c.cfg.VaultPath,
+		"--mountPoint="+c.MountPoint,
+		c.VaultPath,
 	)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	// The CLI outlives edrive, so its output goes to a file rather than a pipe.
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	cryptStdin, err := cmd.StdinPipe()
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("create Cryptomator stdin: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		_ = cryptStdin.Close()
-		return fmt.Errorf("start Cryptomator CLI")
-	}
-
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- cmd.Wait()
-	}()
-
-	if _, err := io.WriteString(cryptStdin, credential+"\n"); err != nil {
-		credential = ""
-		_ = cryptStdin.Close()
-		terminate(cmd.Process.Pid)
-		<-waitDone
-		return fmt.Errorf("send the Cryptomator password to its CLI: %w", err)
-	}
-	credential = ""
-
-	if err := cryptStdin.Close(); err != nil {
-		terminate(cmd.Process.Pid)
-		<-waitDone
-		return fmt.Errorf("close Cryptomator stdin")
-	}
-
-	pidPath := filepath.Join(c.cfg.RuntimeDir, "cryptomator.pid")
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		if mounted(c.cfg.MountPoint) {
-			if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0600); err != nil {
-				terminate(cmd.Process.Pid)
-				<-waitDone
-				return fmt.Errorf("write Cryptomator state: %w", err)
-			}
-			return nil
-		}
-
-		select {
-		case <-waitDone:
-			return fmt.Errorf("Cryptomator CLI exited before mounting; check that the vault is available locally and its password is stored in Keychain")
-		default:
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-
-	terminate(cmd.Process.Pid)
-	<-waitDone
-	return fmt.Errorf("timed out waiting for Cryptomator mount")
-}
-
-func (c *Client) Lock() error {
-	pidPath := filepath.Join(c.cfg.RuntimeDir, "cryptomator.pid")
-	b, err := os.ReadFile(pidPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("vault is not owned by edrive")
-		}
 		return err
 	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start Cryptomator CLI: %w", err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
 
+	_, writeErr := stdin.Write(append(password, '\n'))
+	closeErr := stdin.Close()
+	if writeErr != nil || closeErr != nil {
+		terminate(cmd.Process.Pid)
+		<-exited
+		return fmt.Errorf("Cryptomator CLI did not accept the password: %s", c.lastLog())
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if Mounted(c.MountPoint) {
+			return os.WriteFile(c.pidPath(), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0600)
+		}
+		select {
+		case <-exited:
+			detail := c.lastLog()
+			if strings.Contains(strings.ToLower(detail), "invalid passphrase") || strings.Contains(strings.ToLower(detail), "invalidpassphrase") {
+				return fmt.Errorf("the stored vault password no longer works (was it changed?); run 'edrive setup --password'")
+			}
+			return fmt.Errorf("Cryptomator could not mount the vault: %s", detail)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	terminate(cmd.Process.Pid)
+	<-exited
+	return fmt.Errorf("timed out waiting for the vault to mount: %s", c.lastLog())
+}
+
+// Lock unmounts the workspace and stops the Cryptomator CLI. It asks
+// nicely first, then force-unmounts: no app, open file or terminal sitting in
+// the folder can keep the workspace unlocked. Whatever was already saved is
+// already encrypted; only unsaved edits inside other apps are left behind.
+func (c *Client) Lock() error {
+	if !Mounted(c.MountPoint) {
+		c.stopStaleProcess()
+		return nil
+	}
+
+	pid := c.ownedPID()
+	if pid > 0 {
+		terminate(pid)
+	}
+	if c.waitUnmounted(3 * time.Second) {
+		c.finish(pid)
+		return nil
+	}
+
+	// Something is holding it open. Force it.
+	_ = exec.Command("/usr/sbin/diskutil", "unmount", "force", c.MountPoint).Run()
+	if !c.waitUnmounted(2 * time.Second) {
+		_ = exec.Command("/sbin/umount", "-f", c.MountPoint).Run()
+	}
+	if pid > 0 {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+	if !c.waitUnmounted(3 * time.Second) {
+		return ErrBusy
+	}
+	c.finish(pid)
+	return nil
+}
+
+func (c *Client) waitUnmounted(d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if !Mounted(c.MountPoint) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return !Mounted(c.MountPoint)
+}
+
+// finish makes sure the CLI (and its file server) are gone.
+func (c *Client) finish(pid int) {
+	if pid > 0 {
+		deadline := time.Now().Add(2 * time.Second)
+		for processExists(pid) && time.Now().Before(deadline) {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if processExists(pid) {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	_ = os.Remove(c.pidPath())
+}
+
+func (c *Client) stopStaleProcess() {
+	if pid := c.ownedPID(); pid > 0 {
+		terminate(pid)
+	}
+	_ = os.Remove(c.pidPath())
+}
+
+// ownedPID returns the recorded CLI pid if that process is still the CLI.
+func (c *Client) ownedPID() int {
+	b, err := os.ReadFile(c.pidPath())
+	if err != nil {
+		return 0
+	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil || pid <= 0 {
-		return fmt.Errorf("invalid Cryptomator process state")
+		return 0
 	}
-	if !processMatches(pid, c.cfg.CLIPath) {
-		return fmt.Errorf("edrive process state is stale")
+	// Match by name rather than full path so a CLI started by an older edrive
+	// (or from another install location) is still recognised and stopped.
+	out, err := exec.Command("/bin/ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil || !strings.Contains(string(out), "cryptomator-cli") {
+		return 0
 	}
-
-	terminate(pid)
-
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		mountedNow := mounted(c.cfg.MountPoint)
-		aliveNow := processExists(pid)
-		if !mountedNow && !aliveNow {
-			_ = os.Remove(pidPath)
-			return nil
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-
-	return fmt.Errorf("timed out waiting for Cryptomator to close")
+	return pid
 }
 
-func cryptomatorCredential(vaultID string) (string, error) {
-	out, err := exec.Command(
-		"/usr/bin/security",
-		"find-generic-password",
-		"-s", KeychainService,
-		"-a", vaultID,
-		"-w",
-	).Output()
+func (c *Client) lastLog() string {
+	data, err := os.ReadFile(c.logPath())
 	if err != nil {
-		return "", fmt.Errorf("Cryptomator's password is not available from macOS Keychain for this vault; unlock it once in Cryptomator so its password is stored, then retry")
+		return "no details available"
 	}
-	credential := strings.TrimSpace(string(out))
-	if credential == "" {
-		return "", fmt.Errorf("Cryptomator's Keychain password for this vault is empty; open Cryptomator and set the vault password again")
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) > 3 {
+		lines = lines[len(lines)-3:]
 	}
-	return credential, nil
-}
-
-func DiscoverVaultID(vaultPath string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	text := strings.TrimSpace(strings.Join(lines, " "))
+	if text == "" {
+		return "no details available"
 	}
-
-	settingsPath := filepath.Join(home, "Library", "Application Support", "Cryptomator", "settings.json")
-	b, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return "", err
-	}
-
-	var settings struct {
-		Directories []struct {
-			ID   string `json:"id"`
-			Path string `json:"path"`
-		} `json:"directories"`
-	}
-	if err := json.Unmarshal(b, &settings); err != nil {
-		return "", err
-	}
-
-	target := canonicalPath(vaultPath)
-	for _, directory := range settings.Directories {
-		if directory.ID == "" || directory.Path == "" {
-			continue
-		}
-		path := directory.Path
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(home, path)
-		}
-		if canonicalPath(path) == target {
-			return directory.ID, nil
-		}
-	}
-
-	return "", fmt.Errorf("vault is not registered in Cryptomator")
-}
-
-func mounted(mountPoint string) bool {
-	if mountPoint == "" {
-		return false
-	}
-	out, err := exec.Command("mount").Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), " on "+filepath.Clean(mountPoint)+" (")
-}
-
-func processMatches(pid int, expectedCLI string) bool {
-	if expectedCLI == "" {
-		return false
-	}
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(strings.TrimSpace(string(out)), expectedCLI)
+	return text
 }
 
 func processExists(pid int) bool {
-	return exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "pid=").Run() == nil
-}
-
-func isExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
-}
-
-func canonicalPath(path string) string {
-	path = filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return filepath.Clean(resolved)
-	}
-	return path
+	return syscall.Kill(pid, 0) == nil
 }
 
 func terminate(pid int) {
 	_ = syscall.Kill(-pid, syscall.SIGTERM)
 	_ = syscall.Kill(pid, syscall.SIGTERM)
+}
+
+func isExecutable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
 }

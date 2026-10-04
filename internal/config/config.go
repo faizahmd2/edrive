@@ -6,61 +6,48 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
-
-const CurrentVersion = 3
 
 const (
 	RcloneRemote = "edrive-cloud"
 	RemoteVault  = "edrive"
+
+	// KeychainService and VaultPasswordAccount name the Keychain item that
+	// holds the Cryptomator vault password. Only the edrive binary can read it.
+	KeychainService      = "edrive"
+	VaultPasswordAccount = "vault-password"
+
+	// OpenDuration is how long 'edrive open' keeps the workspace unlocked.
+	OpenDuration = 30 * time.Minute
 )
 
 type Config struct {
-	ConfigPath     string `json:"-"`
-	ConfigFound    bool   `json:"-"`
-	Version        int    `json:"version"`
-	RcloneRemote   string `json:"rclone_remote"`
-	RclonePath     string `json:"rclone_path"`
-	AgePath        string `json:"age_path,omitempty"`
-	ZstdPath       string `json:"zstd_path,omitempty"`
-	CryptomatorCLI string `json:"cryptomator_cli,omitempty"`
+	ConfigPath   string `json:"-"`
+	ConfigFound  bool   `json:"-"`
+	RcloneRemote string `json:"rclone_remote"`
+	RclonePath   string `json:"rclone_path"`
 }
 
 func Home() string {
+	if dir := strings.TrimSpace(os.Getenv("EDRIVE_HOME")); dir != "" {
+		return filepath.Clean(dir)
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".edrive")
 }
 
-func DefaultPath() string {
-	return filepath.Join(Home(), "config.json")
-}
-
-func WorkspacePath() string {
-	return filepath.Join(Home(), "workspace")
-}
-
-func LocalVaultPath() string {
-	return filepath.Join(Home(), "vault")
-}
-
-func BackupDir() string {
-	return filepath.Join(Home(), "backups")
-}
-
-func DevicesPath() string {
-	return filepath.Join(Home(), "devices.json")
-}
-
-func RuntimeDir() string {
-	return filepath.Join(Home(), "runtime")
-}
-
-func ToolsDir() string {
-	return filepath.Join(Home(), "tools")
-}
-
-func TempDir() string {
-	return filepath.Join(Home(), "tmp")
+func DefaultPath() string       { return filepath.Join(Home(), "config.json") }
+func WorkspacePath() string     { return filepath.Join(Home(), "workspace") }
+func LocalVaultPath() string    { return filepath.Join(Home(), "vault") }
+func BackupDir() string         { return filepath.Join(Home(), "backups") }
+func RuntimeDir() string        { return filepath.Join(Home(), "runtime") }
+func ToolsDir() string          { return filepath.Join(Home(), "tools") }
+func StateDir() string          { return filepath.Join(Home(), "state") }
+func LocalTrashDir() string     { return filepath.Join(Home(), "trash") }
+func LegacyDevicesPath() string { return filepath.Join(Home(), "devices.json") }
+func LegacyRecoveryKeyPath() string {
+	return filepath.Join(BackupDir(), "edrive-recovery-key.txt")
 }
 
 func Defaults(path string) Config {
@@ -69,48 +56,34 @@ func Defaults(path string) Config {
 	}
 	return Config{
 		ConfigPath:   filepath.Clean(path),
-		Version:      CurrentVersion,
 		RcloneRemote: RcloneRemote,
 		RclonePath:   RemoteVault,
 	}
 }
 
+// Load reads the config. Unknown and legacy fields are ignored, so older
+// installs keep working without a forced rebuild.
 func Load(path string) (Config, error) {
 	cfg := Defaults(path)
-
-	f, err := os.Open(cfg.ConfigPath)
+	data, err := os.ReadFile(cfg.ConfigPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cfg, nil
 		}
-		cfg.ConfigFound = true
-		return cfg, fmt.Errorf("open config: %w", err)
+		return cfg, fmt.Errorf("read config: %w", err)
 	}
-	defer f.Close()
-
 	cfg.ConfigFound = true
+
 	var stored Config
-	if err := json.NewDecoder(f).Decode(&stored); err != nil {
-		return cfg, fmt.Errorf("decode config: %w", err)
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return cfg, fmt.Errorf("config %s is not valid JSON; run 'edrive setup' to rewrite it", cfg.ConfigPath)
 	}
-
-	cfg.Version = stored.Version
-	if cfg.Version != CurrentVersion {
-		return cfg, fmt.Errorf("edrive config version %d must be rebuilt with 'edrive setup'", cfg.Version)
+	if v := strings.TrimSpace(stored.RcloneRemote); v != "" {
+		cfg.RcloneRemote = v
 	}
-	cfg.RcloneRemote = stored.RcloneRemote
-	cfg.RclonePath = stored.RclonePath
-	cfg.AgePath = Expand(stored.AgePath)
-	cfg.ZstdPath = Expand(stored.ZstdPath)
-	cfg.CryptomatorCLI = Expand(stored.CryptomatorCLI)
-
-	if strings.TrimSpace(cfg.RcloneRemote) == "" {
-		cfg.RcloneRemote = RcloneRemote
+	if v := strings.TrimSpace(stored.RclonePath); v != "" {
+		cfg.RclonePath = v
 	}
-	if strings.TrimSpace(cfg.RclonePath) == "" {
-		cfg.RclonePath = RemoteVault
-	}
-	cfg.ConfigPath = Defaults(cfg.ConfigPath).ConfigPath
 	return cfg, nil
 }
 
@@ -118,49 +91,57 @@ func (c Config) Save() error {
 	if c.ConfigPath == "" {
 		return fmt.Errorf("config path is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(c.ConfigPath), 0700); err != nil {
-		return fmt.Errorf("create edrive state: %w", err)
-	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(c.ConfigPath), ".config-*.tmp")
+	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
-		return fmt.Errorf("create config temp file: %w", err)
+		return err
+	}
+	return WriteFileAtomic(c.ConfigPath, append(data, '\n'), 0600)
+}
+
+// Remote is the rclone path of the encrypted vault, e.g. "edrive-cloud:edrive".
+func (c Config) Remote() string {
+	return c.RcloneRemote + ":" + c.RclonePath
+}
+
+func Expand(path string) string {
+	path = strings.TrimSpace(path)
+	home, _ := os.UserHomeDir()
+	if path == "~" {
+		return home
+	}
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
+// WriteFileAtomic writes data to a temp file in the same directory and
+// renames it into place, so readers never see a half-written file.
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
 	}
 	tmpPath := tmp.Name()
 	defer func() {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 	}()
-
-	if err := tmp.Chmod(0600); err != nil {
+	if err := tmp.Chmod(perm); err != nil {
 		return err
 	}
-	enc := json.NewEncoder(tmp)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(c); err != nil {
-		return fmt.Errorf("write config: %w", err)
+	if _, err := tmp.Write(data); err != nil {
+		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("sync config: %w", err)
+		return err
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close config: %w", err)
+		return err
 	}
-	if err := os.Rename(tmpPath, c.ConfigPath); err != nil {
-		return fmt.Errorf("save config: %w", err)
-	}
-	return os.Chmod(c.ConfigPath, 0600)
-}
-
-func Expand(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "~" {
-		home, _ := os.UserHomeDir()
-		return home
-	}
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
-	}
-	return path
+	return os.Rename(tmpPath, path)
 }

@@ -1,16 +1,18 @@
 package rclone
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type Client struct {
@@ -271,118 +273,12 @@ func (c *Client) CheckConfigured() error {
 	return nil
 }
 
-func (c *Client) Diff(localVault string) (string, error) {
-	if err := requireDirectory(localVault); err != nil {
-		return "", err
-	}
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd := exec.Command(c.Path, "check", "--checksum", "--combined", "-", localVault, c.Remote())
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	runErr := cmd.Run()
-	output := strings.TrimSpace(stdout.String())
-	if output == "" && runErr != nil {
-		return "", fmt.Errorf("compare encrypted vaults: %s", compactOutput(stderr.Bytes(), runErr))
-	}
-
-	var lines []string
-	var mismatches int
-	var errors int
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		status := parts[0]
-		path := parts[1]
-		switch status {
-		case "=":
-			continue
-		case "+":
-			lines = append(lines, "+ "+path)
-			mismatches++
-		case "-":
-			lines = append(lines, "- "+path)
-			mismatches++
-		case "*":
-			lines = append(lines, "* "+path)
-			mismatches++
-		case "!":
-			lines = append(lines, "! "+path)
-			errors++
-		}
-	}
-
-	if errors > 0 {
-		return "", fmt.Errorf("compare encrypted vaults found %d error(s):\n%s", errors, strings.Join(lines, "\n"))
-	}
-	if runErr != nil && len(lines) == 0 {
-		return "", fmt.Errorf("compare encrypted vaults: %s", compactOutput(stderr.Bytes(), runErr))
-	}
-
-	if mismatches == 0 {
-		return "No differences.\n", nil
-	}
-
-	var summary strings.Builder
-	summary.WriteString("Differences:\n")
-	summary.WriteString(strings.Join(lines, "\n"))
-	summary.WriteString("\n\n")
-	summary.WriteString(fmt.Sprintf("%d difference(s).\n", mismatches))
-	return summary.String(), nil
-}
-
 func (c *Client) EnsureRemoteDir() error {
 	cmd := exec.Command(c.Path, "mkdir", c.Remote())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create remote vault directory: %s", compactOutput(out, err))
 	}
 	return nil
-}
-
-func (c *Client) RemoteVaultState() (bool, bool, error) {
-	out, err := c.output("lsf", "--files-only", c.Remote())
-	if err != nil {
-		return false, false, fmt.Errorf("inspect remote vault: %s", compactOutput(out, err))
-	}
-
-	hasVault := false
-	hasOther := false
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		name := strings.TrimSpace(line)
-		if name == "" {
-			continue
-		}
-		if name == "vault.cryptomator" {
-			hasVault = true
-		} else {
-			hasOther = true
-		}
-	}
-	return hasVault, hasOther, nil
-}
-
-func (c *Client) SyncLocalToRemote(localVault string) error {
-	if err := requireDirectory(localVault); err != nil {
-		return err
-	}
-	fmt.Printf("Publishing encrypted vault to %s\n", c.Remote())
-	return c.run("sync", localVault, c.Remote())
-}
-
-func (c *Client) SyncRemoteToLocal(localVault string) error {
-	if err := os.MkdirAll(localVault, 0700); err != nil {
-		return fmt.Errorf("create local vault: %w", err)
-	}
-	fmt.Printf("Pulling encrypted vault from %s\n", c.Remote())
-	return c.run("sync", c.Remote(), localVault)
 }
 
 func (c *Client) remoteExists() bool {
@@ -399,8 +295,147 @@ func (c *Client) remoteExists() bool {
 	return false
 }
 
+// netFlags keep rclone from hanging for minutes when the network is down.
+var netFlags = []string{"--contimeout", "15s", "--timeout", "60s", "--retries", "2", "--low-level-retries", "3"}
+
 func (c *Client) probe() error {
-	return c.runQuiet("lsd", c.RemoteName+":")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.Path, append([]string{"lsd", "--max-depth", "1", c.RemoteName + ":"}, netFlags...)...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
+}
+
+// Item is one entry from 'rclone lsjson'.
+type Item struct {
+	Path    string    `json:"Path"`
+	Size    int64     `json:"Size"`
+	ModTime time.Time `json:"ModTime"`
+	IsDir   bool      `json:"IsDir"`
+}
+
+// List returns every file and directory under path (recursive). A missing
+// directory is reported as an empty listing.
+func (c *Client) List(path string, recursive bool) ([]Item, error) {
+	args := []string{"lsjson", "--no-mimetype", "--fast-list"}
+	if recursive {
+		args = append(args, "-R")
+	}
+	args = append(args, path)
+	out, err := c.output(append(args, netFlags...)...)
+	if err != nil {
+		if strings.Contains(string(out), "directory not found") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list %s: %s", path, compactOutput(out, err))
+	}
+	var items []Item
+	if err := json.Unmarshal(out, &items); err != nil {
+		return nil, fmt.Errorf("list %s: unexpected rclone output", path)
+	}
+	return items, nil
+}
+
+// Copy copies exactly the listed relative paths from src to dst. Files that
+// would be overwritten in dst are moved into backupDir instead of being lost.
+// progress, if set, is called with the number of files done so far.
+func (c *Client) Copy(src, dst string, files []string, backupDir string, progress func(int)) error {
+	if len(files) == 0 {
+		return nil
+	}
+	list, cleanup, err := writeList(files)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	args := append([]string{"copy", src, dst, "--files-from-raw", list}, batchFlags(len(files))...)
+	if backupDir != "" {
+		args = append(args, "--backup-dir", backupDir)
+	}
+	return c.runCounting(progress, append(args, netFlags...)...)
+}
+
+// Move moves exactly the listed relative paths from src to dst.
+func (c *Client) Move(src, dst string, files []string, progress func(int)) error {
+	if len(files) == 0 {
+		return nil
+	}
+	list, cleanup, err := writeList(files)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	args := append([]string{"move", src, dst, "--files-from-raw", list}, batchFlags(len(files))...)
+	return c.runCounting(progress, append(args, netFlags...)...)
+}
+
+// batchFlags: for a few files, look each one up directly; for many, one
+// listing of the destination is far quicker than hundreds of lookups.
+// Several parallel transfers help with clouds that are slow per file.
+func batchFlags(n int) []string {
+	flags := []string{"--transfers", "8", "--checkers", "16"}
+	if n <= 50 {
+		return append(flags, "--no-traverse")
+	}
+	return append(flags, "--fast-list")
+}
+
+// runCounting runs rclone with per-file logging and reports each finished
+// file, so long transfers show live progress instead of looking frozen.
+func (c *Client) runCounting(progress func(int), args ...string) error {
+	cmd := exec.Command(c.Path, append(args, "-v", "--stats", "0")...)
+	cmd.Stdout = io.Discard
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := 0
+	var tail []string
+	scanner := bufio.NewScanner(stderr)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, ": Copied (") || strings.Contains(line, ": Moved (") {
+			done++
+			if progress != nil {
+				progress(done)
+			}
+			continue
+		}
+		if strings.Contains(line, "ERROR") || strings.Contains(line, "NOTICE") || strings.Contains(line, "Failed") {
+			tail = append(tail, line)
+			if len(tail) > 3 {
+				tail = tail[1:]
+			}
+		}
+	}
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("rclone %s: %s", args[0], compactOutput([]byte(strings.Join(tail, "\n")), err))
+	}
+	return nil
+}
+
+func (c *Client) Mkdir(path string) error {
+	return c.run(append([]string{"mkdir", path}, netFlags...)...)
+}
+
+func writeList(files []string) (string, func(), error) {
+	f, err := os.CreateTemp("", "edrive-rclone-list-*")
+	if err != nil {
+		return "", nil, err
+	}
+	_, werr := f.WriteString(strings.Join(files, "\n") + "\n")
+	cerr := f.Close()
+	cleanup := func() { _ = os.Remove(f.Name()) }
+	if werr != nil || cerr != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("write rclone file list")
+	}
+	return f.Name(), cleanup, nil
 }
 
 func (c *Client) interactive(args ...string) error {
@@ -412,20 +447,14 @@ func (c *Client) interactive(args ...string) error {
 }
 
 func (c *Client) run(args ...string) error {
-	cmd := exec.Command(c.Path, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("rclone %s failed", args[0])
-	}
-	return nil
-}
-
-func (c *Client) runQuiet(args ...string) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command(c.Path, args...)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rclone %s: %s", args[0], compactOutput(stderr.Bytes(), err))
+	}
+	return nil
 }
 
 func (c *Client) output(args ...string) ([]byte, error) {
@@ -437,14 +466,6 @@ func (c *Client) output(args ...string) ([]byte, error) {
 		return append(out, stderr.Bytes()...), err
 	}
 	return out, err
-}
-
-func requireDirectory(path string) error {
-	info, err := os.Stat(filepath.Clean(path))
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("local encrypted vault is unavailable at %s", path)
-	}
-	return nil
 }
 
 func compactOutput(out []byte, err error) string {

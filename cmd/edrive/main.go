@@ -6,122 +6,103 @@ import (
 
 	"github.com/faizahmd2/edrive/internal/app"
 	"github.com/faizahmd2/edrive/internal/config"
-	"github.com/faizahmd2/edrive/internal/decode"
 	"github.com/faizahmd2/edrive/internal/help"
-	"github.com/faizahmd2/edrive/internal/setup"
 )
 
-const version = "0.4.0"
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		printHelp()
+		help.PrintAll()
 		os.Exit(2)
 	}
+	command, args := os.Args[1], os.Args[2:]
 
-	command := os.Args[1]
-
-	if command == "help" || command == "--help" || command == "-h" {
-		if len(os.Args) == 3 && os.Args[2] != "" && !isHelpArg(os.Args[2]) {
-			printCommandHelp(os.Args[2])
+	if isHelp(command) {
+		if len(args) == 1 {
+			help.Print(args[0])
 		} else {
-			printHelp()
+			help.PrintAll()
 		}
 		return
 	}
-	if len(os.Args) >= 3 && isHelpArg(os.Args[len(os.Args)-1]) {
-		printCommandHelp(command)
+	if len(args) > 0 && isHelp(args[len(args)-1]) {
+		help.Print(command)
 		return
 	}
+
+	// Commands that work without any setup.
+	switch command {
+	case "version", "--version", "-v":
+		fmt.Println(version)
+		return
+	case "decode":
+		run(app.Decode(args))
+		return
+	case "__clear-clipboard":
+		run(app.ClearClipboard(args))
+		return
+	}
+
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		fail(err)
+	}
+	a := app.App{Config: cfg}
 
 	switch command {
-	case "help", "--help", "-h":
-		printHelp()
-	case "version":
-		fmt.Println(version)
-	case "decode":
-		if len(os.Args) != 4 {
-			fail(command, fmt.Errorf("usage: edrive decode <encrypted-file> <recovery-key>"))
-		}
-		output, err := decode.File(os.Args[2], os.Args[3])
-		if err != nil {
-			fail(command, err)
-		}
-		fmt.Println("Recovered:", output)
 	case "setup":
-		run(command, setup.Run)
+		run(a.Setup(args))
 	case "doctor":
-		cfg, err := config.Load(config.DefaultPath())
-		a := app.App{Config: cfg, ConfigError: err}
-		run(command, a.Doctor)
+		run(a.Doctor())
+	case "open":
+		run(a.Open(args))
+	case "lock":
+		run(a.Lock())
+	case "pwd", "cd":
+		run(a.Pwd())
+	case "status":
+		run(a.Status())
+	case "pass":
+		run(a.Pass(args))
+	case "sync", "push", "pull":
+		run(a.Sync(args))
+	case "diff":
+		run(a.Diff())
+	case "backup":
+		run(a.Backup(args))
+	case "cloud":
+		run(a.Cloud(args))
 	case "remove":
-		cfg, err := config.Load(config.DefaultPath())
-		a := app.App{Config: cfg, ConfigError: err}
-		run(command, a.Remove)
+		run(a.Remove())
+	case "__sync":
+		run(a.BackgroundSync(args))
+	case "__guard":
+		run(a.RunGuard())
 	default:
-		cfg, err := config.Load(config.DefaultPath())
-		if err != nil {
-			fail(command, err)
-		}
-		a := app.App{Config: cfg}
-
-		switch command {
-		case "open":
-			run(command, a.Open)
-		case "lock":
-			run(command, a.Lock)
-		case "push":
-			run(command, a.Push)
-		case "pull":
-			run(command, a.Pull)
-		case "backup":
-			run(command, a.Backup)
-		case "pass":
-			run(command, func() error {
-				return a.Pass(os.Args[2:])
-			})
-		case "diff":
-			run(command, a.Diff)
-		case "cloud":
-			run(command, func() error {
-				return a.Cloud(os.Args[2:])
-			})
-		case "pwd":
-			run(command, a.Pwd)
-		case "device":
-			run(command, func() error {
-				return a.Device(os.Args[2:])
-			})
-		default:
-			fmt.Fprintln(os.Stderr, "unknown command:", command)
-			printHelp()
-			os.Exit(2)
-		}
+		fmt.Fprintln(os.Stderr, "unknown command:", command)
+		fmt.Fprintln(os.Stderr)
+		help.PrintAll()
+		os.Exit(2)
 	}
 }
 
-func run(command string, fn func() error) {
-	if err := fn(); err != nil {
-		fail(command, err)
+func run(err error) {
+	if err != nil {
+		fail(err)
 	}
 }
 
-func fail(command string, err error) {
-	fmt.Fprintln(os.Stderr, "error:", err)
-	if command != "doctor" && command != "decode" && command != "setup" && command != "device" && command != "lock" && command != "remove" {
-		fmt.Fprintln(os.Stderr, "Run 'edrive doctor' for diagnostics.")
+func fail(err error) {
+	if err.Error() == "cancelled" {
+		fmt.Fprintln(os.Stderr, "Cancelled.")
+	} else {
+		fmt.Fprintln(os.Stderr, "edrive:", err)
 	}
 	os.Exit(1)
 }
 
-func printHelp() {
-	help.PrintAll()
-}
-
-func printCommandHelp(command string) {
-	help.Print(command)
-}
-
-func isHelpArg(value string) bool {
-	return value == "help" || value == "--help" || value == "-h"
+func isHelp(s string) bool {
+	return s == "help" || s == "--help" || s == "-h"
 }

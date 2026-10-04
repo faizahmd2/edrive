@@ -2,130 +2,143 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/faizahmd2/edrive/internal/config"
-	"github.com/faizahmd2/edrive/internal/keychain"
+	"github.com/faizahmd2/edrive/internal/macos"
 	"github.com/faizahmd2/edrive/internal/pass"
 	"github.com/faizahmd2/edrive/internal/ui"
 )
 
+const clipboardClearAfter = 30 * time.Second
+
+const passUsage = `usage:
+  edrive pass <key>          print a secret
+  edrive pass <key> -c       copy it (clipboard clears after 30s)
+  edrive pass ls             list keys
+  edrive pass set <key>      save a secret (typed hidden, or piped on stdin)`
+
 func (a App) Pass(args []string) error {
-	if err := a.requireConfigured(); err != nil {
-		return err
+	copyFlag := false
+	var rest []string
+	for _, arg := range args {
+		if arg == "-c" || arg == "--copy" {
+			copyFlag = true
+			continue
+		}
+		rest = append(rest, arg)
 	}
 
 	switch {
-	case len(args) == 1 && isPassListCommand(args[0]):
-		if err := a.ensureUnlocked(); err != nil {
-			return err
-		}
-		names, err := pass.List(config.WorkspacePath())
-		if err != nil {
-			return err
-		}
-		for _, name := range names {
-			fmt.Println(name)
-		}
-		return nil
+	case len(rest) == 1 && (rest[0] == "ls" || rest[0] == "list"):
+		return a.withVault("list your edrive secrets", false, func() error {
+			names, err := pass.List(config.WorkspacePath())
+			if err != nil {
+				return err
+			}
+			for _, name := range names {
+				fmt.Println(name)
+			}
+			return nil
+		})
 
-	case len(args) == 1:
-		if err := a.ensureUnlocked(); err != nil {
+	case len(rest) == 2 && rest[0] == "set":
+		return a.passSet(rest[1])
+
+	case len(rest) == 1:
+		var value string
+		err := a.withVault("show an edrive secret", false, func() error {
+			v, err := pass.Get(config.WorkspacePath(), rest[0])
+			value = v
 			return err
-		}
-		value, err := pass.Get(config.WorkspacePath(), args[0])
+		})
 		if err != nil {
 			return err
+		}
+		if copyFlag {
+			count := macos.ClipboardSet(value)
+			_ = spawnDetached("__clear-clipboard", strconv.FormatInt(count, 10))
+			fmt.Fprintf(os.Stderr, "Copied %s to clipboard (clears in %ds).\n", rest[0], int(clipboardClearAfter.Seconds()))
+			return nil
 		}
 		fmt.Println(value)
 		return nil
 
-	case len(args) == 2 && args[0] == "set":
-		return a.passSetEditor(args[1])
-
-	case len(args) == 2:
-		if err := keychain.UnlockDefault(); err != nil {
-			return fmt.Errorf("unlock macOS Keychain before changing pass entry: %w", err)
-		}
-		if err := a.ensureUnlocked(); err != nil {
-			return err
-		}
-		if err := pass.Set(config.WorkspacePath(), args[0], args[1]); err != nil {
-			return err
-		}
-		fmt.Printf("Pass entry %q updated.\n", args[0])
-		return nil
+	case len(rest) == 2:
+		return fmt.Errorf("to keep secrets out of your shell history, use: edrive pass set %s", rest[0])
 
 	default:
-		return fmt.Errorf("usage: edrive pass <key> | edrive pass ls | edrive pass list | edrive pass <key> <value> | edrive pass set <key>")
+		return fmt.Errorf("%s", passUsage)
 	}
 }
 
-func (a App) passSetEditor(name string) error {
-	if err := keychain.UnlockDefault(); err != nil {
-		return fmt.Errorf("unlock macOS Keychain before changing pass entry: %w", err)
-	}
-	if err := a.ensureUnlocked(); err != nil {
+func (a App) passSet(name string) error {
+	if err := pass.ValidateName(name); err != nil {
 		return err
 	}
-
-	editDir := filepath.Join(config.WorkspacePath(), "pass")
-	if err := os.MkdirAll(editDir, 0700); err != nil {
-		return fmt.Errorf("create pass editor directory: %w", err)
+	var value []byte
+	var err error
+	if ui.StdinIsTerminal() {
+		value, err = ui.ReadSecret(fmt.Sprintf("Value for %s (hidden): ", name))
+	} else {
+		value, err = io.ReadAll(os.Stdin) // multi-line values: pbpaste | edrive pass set key
 	}
-	tmp, err := os.CreateTemp(editDir, ".pass-edit-*.txt")
 	if err != nil {
-		return fmt.Errorf("create pass editor file: %w", err)
+		return err
 	}
-	path := tmp.Name()
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(path)
-	}()
-	if err := tmp.Chmod(0600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("protect pass editor file: %w", err)
-	}
-
-	if pass.Exists(config.WorkspacePath(), name) {
-		existing, err := pass.ReadText(config.WorkspacePath(), name)
-		if err != nil {
-			_ = tmp.Close()
-			return err
-		}
-		if _, err := tmp.WriteString(existing); err != nil {
-			_ = tmp.Close()
-			return fmt.Errorf("seed pass editor file: %w", err)
-		}
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close pass editor file: %w", err)
-	}
-
-	fmt.Println("Editing pass entry:", name)
-	fmt.Println("Save and exit the editor to update the entry.")
-	if err := ui.EditTextFile(path); err != nil {
-		return fmt.Errorf("edit pass entry %q: %w", name, err)
-	}
-
-	value, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read edited pass entry: %w", err)
-	}
+	defer ui.Wipe(value)
 	text := string(value)
 	if strings.TrimSpace(text) == "" {
-		return fmt.Errorf("pass entry cannot be empty")
+		return fmt.Errorf("value is empty; nothing saved")
 	}
-	if err := pass.SetText(config.WorkspacePath(), name, text); err != nil {
+	err = a.withVault("save an edrive secret", true, func() error {
+		return pass.SetText(config.WorkspacePath(), name, text)
+	})
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Pass entry %q updated.\n", name)
+	fmt.Fprintf(os.Stderr, "Saved %s.\n", name)
 	return nil
 }
 
-func isPassListCommand(value string) bool {
-	value = strings.ToLower(strings.TrimSpace(value))
-	return value == "ls" || value == "list"
+// withVault runs fn with the workspace mounted. If it had to unlock, it locks
+// again straight away (and syncs if fn changed something).
+func (a App) withVault(reason string, writes bool, fn func() error) error {
+	if mounted() {
+		return fn()
+	}
+	return withLock(func() error {
+		opened, err := a.unlock(reason)
+		if err != nil {
+			return err
+		}
+		fnErr := fn()
+		if opened {
+			if err := a.crypto().Lock(); err != nil && fnErr == nil {
+				fnErr = err
+			}
+			if writes {
+				startBackgroundSync(syncAfterLock)
+			}
+		}
+		return fnErr
+	})
+}
+
+// ClearClipboard is the hidden helper behind 'pass -c'.
+func ClearClipboard(args []string) error {
+	if len(args) != 1 {
+		return nil
+	}
+	count, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return nil
+	}
+	time.Sleep(clipboardClearAfter)
+	macos.ClipboardClearIf(count)
+	return nil
 }

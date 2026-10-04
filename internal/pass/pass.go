@@ -149,14 +149,23 @@ func List(workspace string) ([]string, error) {
 	return names, nil
 }
 
-func entryPath(workspace, name string) (string, error) {
+// ValidateName rejects names that are empty or could escape the pass folder.
+func ValidateName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", fmt.Errorf("pass name is required")
+		return fmt.Errorf("pass name is required")
 	}
-	if name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
-		return "", fmt.Errorf("invalid pass name %q", name)
+	if name == "." || name == ".." || strings.HasPrefix(name, ".") || strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("invalid pass name %q", name)
 	}
+	return nil
+}
+
+func entryPath(workspace, name string) (string, error) {
+	if err := ValidateName(name); err != nil {
+		return "", err
+	}
+	name = strings.TrimSpace(name)
 
 	dir := filepath.Join(workspace, "pass")
 	legacy := filepath.Join(dir, name)

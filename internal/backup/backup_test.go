@@ -1,89 +1,121 @@
 package backup
 
 import (
-	"archive/tar"
-	"io"
+	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"testing"
+
+	"filippo.io/age"
 )
 
-func TestCreate(t *testing.T) {
-	zstd, err := exec.LookPath("zstd")
-	if err != nil {
-		t.Skip("zstd not installed")
+func TestRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "pass", "github.txt"), "token-123")
+	mustWrite(t, filepath.Join(root, "notes.md"), "hello")
+	mustWrite(t, filepath.Join(root, ".DS_Store"), "skip")
+	mustWrite(t, filepath.Join(root, "._notes.md"), "skip")
+
+	out := filepath.Join(t.TempDir(), "edrive-backup"+Suffix)
+	var buf bytes.Buffer
+	if err := Create(root, "correct-horse", &buf); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(out, buf.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	wrong, _ := Identities("nope", "")
+	if _, err := Decode(out, wrong); err == nil {
+		t.Fatal("wrong passphrase must fail")
+	}
+	if _, err := os.Stat(DecodedPath(out)); !os.IsNotExist(err) {
+		t.Fatal("failed decode must not leave output behind")
+	}
+
+	ids, _ := Identities("correct-horse", "")
+	dir, err := Decode(out, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "pass", "github.txt")); string(b) != "token-123" {
+		t.Fatalf("restored content = %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".DS_Store")); !os.IsNotExist(err) {
+		t.Fatal(".DS_Store should be skipped")
+	}
+	if _, err := Decode(out, ids); err == nil {
+		t.Fatal("decode must refuse to overwrite an existing folder")
+	}
+}
+
+// Backups made before 0.5 were encrypted to age key files.
+func TestDecodeWithKeyFile(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "key.txt")
+	mustWrite(t, keyFile, id.String()+"\n")
 
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "nested"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "nested", "note.txt"), []byte("hello"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".DS_Store"), []byte("ignore"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "._note"), []byte("ignore"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	mustWrite(t, filepath.Join(root, "a.txt"), "legacy")
 
-	age := filepath.Join(t.TempDir(), "age")
-	if err := os.WriteFile(age, []byte("#!/bin/sh\nset -eu\ncat\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-
-	out := filepath.Join(t.TempDir(), "backup.age")
+	out := filepath.Join(t.TempDir(), "old"+Suffix)
 	f, err := os.Create(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Create(root, []string{"age1testrecipient"}, age, zstd, f); err != nil {
-		_ = f.Close()
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := exec.Command(zstd, "-d", "-c", out)
-	plain, err := cmd.StdoutPipe()
+	enc, err := age.Encrypt(f, id.Recipient())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Start(); err != nil {
+	if err := writeArchive(root, enc); err != nil {
 		t.Fatal(err)
 	}
+	if err := enc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
 
-	tr := tar.NewReader(plain)
-	found := false
-	for {
-		h, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if h.Name == "nested/note.txt" {
-			data, err := io.ReadAll(tr)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(data) != "hello" {
-				t.Fatalf("content=%q", data)
-			}
-			found = true
-		}
-		if h.Name == ".DS_Store" || h.Name == "._note" {
-			t.Fatalf("excluded file was archived: %s", h.Name)
-		}
-	}
-	if err := cmd.Wait(); err != nil {
+	ids, err := Identities("", keyFile)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !found {
-		t.Fatal("expected file not found in archive")
+	dir, err := Decode(out, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(b) != "legacy" {
+		t.Fatalf("restored = %q", b)
+	}
+}
+
+func TestGeneratePassphrase(t *testing.T) {
+	p, err := GeneratePassphrase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^([a-z2-9]{5}-){5}[a-z2-9]{5}$`).MatchString(p) {
+		t.Fatalf("unexpected passphrase format %q", p)
+	}
+}
+
+func TestSafeTarPath(t *testing.T) {
+	for _, bad := range []string{"../x", "/etc/passwd", "a/../../x"} {
+		if _, err := safeTarPath(bad); err == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+}
+
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
 	}
 }
