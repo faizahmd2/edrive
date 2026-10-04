@@ -5,7 +5,7 @@ An encrypted workspace for your Mac, synced to your own cloud.
 - **Plain files while you work.** Use Finder, VS Code or anything else.
 - **Encrypted everywhere else.** Built on [Cryptomator](https://cryptomator.org), so the same vault opens in the Cryptomator mobile apps.
 - **Touch ID to unlock.** Locks again by itself.
-- **Your cloud, via [rclone](https://rclone.org).** Google Drive, Dropbox, OneDrive, S3, R2 or B2. Sync never deletes anything.
+- **Your cloud, via [rclone](https://rclone.org).** Google Drive, Dropbox, OneDrive, S3, R2 or B2.
 
 ## Install
 
