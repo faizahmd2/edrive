@@ -158,9 +158,18 @@ func (a App) Status() error {
 	for _, l := range lines {
 		fmt.Println(l)
 	}
-	if suggest {
+	mirrorLine, mirrorStale := a.mirrorSummary()
+	if mirrorLine != "" {
+		fmt.Println(mirrorLine)
+	}
+	if suggest || mirrorStale {
 		fmt.Println()
+	}
+	if suggest {
 		fmt.Println("Run 'edrive sync' to sync now.")
+	}
+	if mirrorStale {
+		fmt.Println("Run 'edrive mirror sync' to copy sealed secrets into the vault.")
 	}
 	return nil
 }

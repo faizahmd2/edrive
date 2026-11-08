@@ -51,6 +51,23 @@ Everything except sync works offline. Sync runs by itself only in the background
 - If a large part of the vault suddenly disappears on one side, edrive does not copy those removals to the other side. Use `edrive sync --allow-deletes` if the removal was intended.
 - If you're offline, nothing fails. Changes wait until the next lock, unlock or `edrive sync`.
 
+## Mirroring sealed secrets
+
+```bash
+edrive mirror init     # once: makes the mirror key inside the vault, prints its public half
+edrive mirror sync     # weekly or monthly: one Touch ID, copies the sealed secrets into the vault
+```
+
+An app can keep each secret sealed on this Mac as one [age](https://age-encryption.org) file, opened in everyday use with its own key (for example the Mac's Secure Enclave and Touch ID), and also encrypted to the mirror key. `edrive mirror sync` copies them one way into `mirror/` in the vault, so the Cryptomator apps can read them and a new Mac can get them back. The app on this Mac stays the only place a secret changes:
+
+- edrive only reads the sealed folder (`~/f2/f2drive/sealed`, or `"mirror_from"` in `~/.edrive/config.json`); it never writes there.
+- Nothing in the vault is deleted: replaced and removed values go to `mirror/.trash`.
+- A copy edited by hand in the vault is kept in that trash, and the Mac's value comes back.
+- If many secrets would vanish at once, nothing is copied unless you pass `--allow-deletes`.
+- A damaged sealed file is skipped by name; every other secret still copies.
+
+A sealed file is `sec_<id>.age` holding UTF-8 JSON: `{"v":1,"id":"sec_<id>","path":"bank/sbi/netbanking","value":"…"}`. It lands at `mirror/bank/sbi/netbanking.txt`. `edrive status` shows when the mirror last ran, and `edrive doctor` reminds you after 30 days.
+
 ## Reading the vault without Cryptomator
 
 ```bash

@@ -70,7 +70,13 @@ func main() {
 	case "pass":
 		run(a.Pass(args))
 	case "sync", "push", "pull":
-		run(a.Sync(args))
+		if command == "sync" && len(args) > 0 && args[0] == "mirror" {
+			run(a.Mirror(append([]string{"sync"}, args[1:]...)))
+		} else {
+			run(a.Sync(args))
+		}
+	case "mirror":
+		run(a.Mirror(args))
 	case "diff":
 		run(a.Diff())
 	case "verify":

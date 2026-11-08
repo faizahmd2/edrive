@@ -8,3 +8,8 @@ require (
 	golang.org/x/term v0.46.0
 	golang.org/x/text v0.42.0
 )
+
+require (
+	filippo.io/age v1.3.2 // indirect
+	filippo.io/hpke v0.4.0 // indirect
+)

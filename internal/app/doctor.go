@@ -81,6 +81,14 @@ func (a App) Doctor() error {
 		}
 	}
 
+	if line, stale := a.mirrorSummary(); line != "" {
+		if stale {
+			note("mirror", line[len("Mirror:    "):]+"; run 'edrive mirror sync'")
+		} else {
+			check(true, "mirror", line[len("Mirror:    "):])
+		}
+	}
+
 	switch r, ok := lastVerify(); {
 	case !ok:
 		note("decoder", "never checked on this vault; run 'edrive verify'")

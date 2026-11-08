@@ -57,6 +57,21 @@ var details = map[string]string{
   internet, so the vault stays readable even if Cryptomator disappears.
   Example: edrive decode ~/.edrive/vault ~/Desktop/vault-plain`,
 
+	"mirror": `edrive mirror init
+edrive mirror sync [--allow-deletes]      (also: edrive sync mirror)
+  Copy a folder of sealed secrets (age files an app keeps on this Mac,
+  ~/f2/f2drive/sealed unless config.json says "mirror_from") into the vault,
+  one way: the app on this Mac is the only place a secret changes, and the
+  vault keeps a readable copy for the Cryptomator apps and for a new Mac.
+  init   make the mirror key inside the vault (once) and print its public
+         half for the app. Never replaces a key that exists.
+  sync   one Touch ID: open each sealed file (read only) and write its value
+         to mirror/<path>.txt. Replaced and removed values go to
+         mirror/.trash, never deleted. A copy edited by hand in the vault is
+         kept there and the Mac's value comes back. If many secrets would
+         vanish at once, nothing is copied unless you pass --allow-deletes.
+         A damaged sealed file is skipped by name.`,
+
 	"verify": `edrive verify
   Prove 'edrive decode' works on your vault: decodes it in memory with
   edrive's own decoder and compares every file with what Cryptomator shows.
@@ -72,7 +87,7 @@ edrive cloud remove
   confirms it has everything. Cloud data, trash and old backups are not touched.`,
 }
 
-var order = []string{"open", "lock", "pwd", "status", "pass", "sync", "diff", "decode", "verify", "setup", "doctor", "cloud", "remove"}
+var order = []string{"open", "lock", "pwd", "status", "pass", "sync", "diff", "mirror", "decode", "verify", "setup", "doctor", "cloud", "remove"}
 
 func Print(command string) {
 	if d, ok := details[command]; ok {
@@ -102,6 +117,7 @@ Sometimes:
   edrive pwd                  print the workspace path (unlocks for 30 min)
   edrive sync                 sync now (also: push, pull)
   edrive diff                 preview a sync
+  edrive mirror sync          copy sealed secrets into the vault
   edrive decode <vault> <dir> read the vault without Cryptomator
   edrive verify               prove that decode reads your vault
 

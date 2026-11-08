@@ -20,6 +20,9 @@ const (
 
 	// OpenDuration is how long 'edrive open' keeps the workspace unlocked.
 	OpenDuration = 30 * time.Minute
+
+	// DefaultMirrorFrom is the sealed folder mirrored when config names none.
+	DefaultMirrorFrom = "~/f2/f2drive/sealed"
 )
 
 type Config struct {
@@ -27,6 +30,9 @@ type Config struct {
 	ConfigFound  bool   `json:"-"`
 	RcloneRemote string `json:"rclone_remote"`
 	RclonePath   string `json:"rclone_path"`
+	// MirrorFrom is the folder of sealed secrets 'edrive mirror' copies into
+	// the vault. edrive only reads it.
+	MirrorFrom string `json:"mirror_from,omitempty"`
 }
 
 func Home() string {
@@ -55,6 +61,7 @@ func Defaults(path string) Config {
 		ConfigPath:   filepath.Clean(path),
 		RcloneRemote: RcloneRemote,
 		RclonePath:   RemoteVault,
+		MirrorFrom:   DefaultMirrorFrom,
 	}
 }
 
@@ -80,6 +87,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := strings.TrimSpace(stored.RclonePath); v != "" {
 		cfg.RclonePath = v
+	}
+	if v := strings.TrimSpace(stored.MirrorFrom); v != "" {
+		cfg.MirrorFrom = v
 	}
 	return cfg, nil
 }
