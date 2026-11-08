@@ -66,6 +66,17 @@ Restoring needs no setup, no cloud and no Cryptomator. It works with `edrive dec
 age -d edrive-backup.tar.zst.age | zstd -d | tar x
 ```
 
+## Reading the vault without Cryptomator
+
+```bash
+edrive decode ~/.edrive/vault ~/Desktop/vault-plain   # asks for the vault password
+edrive verify                                         # proves it on your vault
+```
+
+`edrive decode` reads a Cryptomator vault (format 8, the default since Cryptomator 1.6) with nothing but its password. It needs no setup, no Cryptomator, no FUSE and no internet, so your files stay readable even if Cryptomator disappears. It works on a copy of the vault downloaded from your cloud too. It refuses damaged or tampered data instead of guessing.
+
+`edrive verify` decodes your vault in memory with edrive's own decoder and compares every file with what Cryptomator shows. It writes nothing. `edrive doctor` reminds you to run it every 90 days.
+
 ## Security model
 
 | Threat | Protection |

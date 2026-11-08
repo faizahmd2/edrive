@@ -23,6 +23,7 @@ type masterkeyFile struct {
 	ScryptCostParam  int    `json:"scryptCostParam"`
 	ScryptBlockSize  int    `json:"scryptBlockSize"`
 	PrimaryMasterKey string `json:"primaryMasterKey"`
+	HmacMasterKey    string `json:"hmacMasterKey"`
 }
 
 // VerifyPassword checks a password against masterkey.cryptomator without
@@ -30,35 +31,65 @@ type masterkeyFile struct {
 // wraps the vault key with AES key wrap (RFC 3394); unwrapping only succeeds
 // with the right password.
 func VerifyPassword(vaultPath string, password []byte) error {
+	enc, mac, err := unlockMasterkey(vaultPath, password, false)
+	wipe(enc)
+	wipe(mac)
+	return err
+}
+
+// unlockMasterkey returns the vault's encryption key and, when withMac is set,
+// its MAC key. Both are 32 bytes.
+func unlockMasterkey(vaultPath string, password []byte, withMac bool) (enc, mac []byte, err error) {
 	data, err := os.ReadFile(filepath.Join(vaultPath, "masterkey.cryptomator"))
 	if err != nil {
-		return fmt.Errorf("read vault masterkey: %w", err)
+		return nil, nil, fmt.Errorf("read vault masterkey: %w", err)
 	}
 	var mk masterkeyFile
 	if err := json.Unmarshal(data, &mk); err != nil {
-		return fmt.Errorf("vault masterkey is not valid JSON: %w", err)
+		return nil, nil, fmt.Errorf("vault masterkey is not valid JSON: %w", err)
 	}
 	salt, err := base64.StdEncoding.DecodeString(mk.ScryptSalt)
 	if err != nil {
-		return fmt.Errorf("vault masterkey salt is invalid")
-	}
-	wrapped, err := base64.StdEncoding.DecodeString(mk.PrimaryMasterKey)
-	if err != nil {
-		return fmt.Errorf("vault masterkey is invalid")
+		return nil, nil, fmt.Errorf("vault masterkey salt is invalid")
 	}
 	if mk.ScryptCostParam <= 1 || mk.ScryptBlockSize <= 0 {
-		return fmt.Errorf("vault masterkey has unsupported scrypt parameters")
+		return nil, nil, fmt.Errorf("vault masterkey has unsupported scrypt parameters")
 	}
 
 	normalized := norm.NFC.Bytes(password)
 	kek, err := scrypt.Key(normalized, salt, mk.ScryptCostParam, mk.ScryptBlockSize, 1, 32)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	if _, err := aesKeyUnwrap(kek, wrapped); err != nil {
-		return ErrWrongPassword
+	defer wipe(kek)
+	unwrap := func(field, what string) ([]byte, error) {
+		wrapped, err := base64.StdEncoding.DecodeString(field)
+		if err != nil {
+			return nil, fmt.Errorf("vault masterkey %s is invalid", what)
+		}
+		key, err := aesKeyUnwrap(kek, wrapped)
+		if err != nil {
+			return nil, ErrWrongPassword
+		}
+		return key, nil
 	}
-	return nil
+	if enc, err = unwrap(mk.PrimaryMasterKey, "key"); err != nil {
+		return nil, nil, err
+	}
+	if !withMac {
+		return enc, nil, nil
+	}
+	if mac, err = unwrap(mk.HmacMasterKey, "MAC key"); err != nil {
+		wipe(enc)
+		return nil, nil, err
+	}
+	return enc, mac, nil
+}
+
+func wipe(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 var defaultIV = []byte{0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6}

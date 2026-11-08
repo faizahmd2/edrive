@@ -94,10 +94,13 @@ func (c *Client) Unlock(password []byte) error {
 	return fmt.Errorf("timed out waiting for the vault to mount: %s", c.lastLog())
 }
 
-// Lock unmounts the workspace and stops the Cryptomator CLI. It asks
-// nicely first, then force-unmounts: no app, open file or terminal sitting in
-// the folder can keep the workspace unlocked. Whatever was already saved is
-// already encrypted; only unsaved edits inside other apps are left behind.
+// Lock unmounts the workspace and stops the Cryptomator CLI. It unmounts
+// first, so macOS hands every saved write to Cryptomator before it stops:
+// stopping the CLI first loses writes still on their way (a file saved just
+// before locking came back as an empty header). Then it asks nicely, then
+// force-unmounts: no app, open file or terminal sitting in the folder can
+// keep the workspace unlocked. Only unsaved edits inside other apps are left
+// behind.
 func (c *Client) Lock() error {
 	if !Mounted(c.MountPoint) {
 		c.stopStaleProcess()
@@ -105,6 +108,15 @@ func (c *Client) Lock() error {
 	}
 
 	pid := c.ownedPID()
+	_ = exec.Command("/usr/sbin/diskutil", "unmount", c.MountPoint).Run()
+	if c.waitUnmounted(3 * time.Second) {
+		if pid > 0 {
+			terminate(pid)
+		}
+		c.finish(pid)
+		return nil
+	}
+
 	if pid > 0 {
 		terminate(pid)
 	}

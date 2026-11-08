@@ -81,6 +81,15 @@ func (a App) Doctor() error {
 		}
 	}
 
+	switch r, ok := lastVerify(); {
+	case !ok:
+		note("decoder", "never checked on this vault; run 'edrive verify'")
+	case time.Since(r.At) > 90*24*time.Hour:
+		note("decoder", "last checked "+roundDuration(time.Since(r.At))+" ago; run 'edrive verify'")
+	default:
+		check(true, "decoder", fmt.Sprintf("reads the vault without Cryptomator (checked %s ago)", roundDuration(time.Since(r.At))))
+	}
+
 	if _, err := os.Stat(config.LegacyRecoveryKeyPath()); err == nil {
 		note("old recovery key", "unencrypted at "+config.LegacyRecoveryKeyPath()+" (move to a password manager, then delete)")
 	}

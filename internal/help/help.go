@@ -57,9 +57,19 @@ var details = map[string]string{
   --passphrase   type your own passphrase instead
   Restore with 'edrive decode', or with: age -d file | zstd -d | tar x`,
 
-	"decode": `edrive decode <backup-file> [old-recovery-key-file]
-  Restore a backup into a folder next to it. Works on any Mac with no setup.
-  Backups from edrive before 0.5 need their recovery key file.`,
+	"decode": `edrive decode <vault-folder> <new-folder>
+  Read a Cryptomator vault with only its password, and write every file
+  into <new-folder> as plain files. Needs no setup, no Cryptomator and no
+  internet, so the vault stays readable even if Cryptomator disappears.
+  Example: edrive decode ~/.edrive/vault ~/Desktop/vault-plain
+
+edrive decode <backup-file> [old-recovery-key-file]
+  Restore an old edrive backup into a folder next to it.`,
+
+	"verify": `edrive verify
+  Prove 'edrive decode' works on your vault: decodes it in memory with
+  edrive's own decoder and compares every file with what Cryptomator shows.
+  Writes nothing. 'edrive doctor' reminds you after 90 days.`,
 
 	"cloud": `edrive cloud add [provider]
 edrive cloud remove
@@ -71,7 +81,7 @@ edrive cloud remove
   confirms it has everything. Cloud data, trash and backups are not touched.`,
 }
 
-var order = []string{"open", "lock", "pwd", "status", "pass", "sync", "diff", "backup", "decode", "setup", "doctor", "cloud", "remove"}
+var order = []string{"open", "lock", "pwd", "status", "pass", "sync", "diff", "backup", "decode", "verify", "setup", "doctor", "cloud", "remove"}
 
 func Print(command string) {
 	if d, ok := details[command]; ok {
@@ -102,7 +112,8 @@ Sometimes:
   edrive sync                 sync now (also: push, pull)
   edrive diff                 preview a sync
   edrive backup               standalone encrypted backup
-  edrive decode <file>        restore a backup (no setup needed)
+  edrive decode <vault> <dir> read the vault without Cryptomator
+  edrive verify               prove that decode reads your vault
 
 Setup:
   edrive setup                install, connect cloud, prepare vault

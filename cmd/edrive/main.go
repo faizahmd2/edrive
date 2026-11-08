@@ -38,7 +38,12 @@ func main() {
 		fmt.Println(version)
 		return
 	case "decode":
-		run(app.Decode(args))
+		// A folder is a vault, read without Cryptomator; a file is an old age backup.
+		if len(args) == 2 && isDir(args[0]) {
+			run(app.DecodeVault(args[0], args[1]))
+		} else {
+			run(app.Decode(args))
+		}
 		return
 	case "__clear-clipboard":
 		run(app.ClearClipboard(args))
@@ -70,6 +75,8 @@ func main() {
 		run(a.Sync(args))
 	case "diff":
 		run(a.Diff())
+	case "verify":
+		run(a.Verify())
 	case "backup":
 		run(a.Backup(args))
 	case "cloud":
@@ -101,6 +108,11 @@ func fail(err error) {
 		fmt.Fprintln(os.Stderr, "edrive:", err)
 	}
 	os.Exit(1)
+}
+
+func isDir(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
 }
 
 func isHelp(s string) bool {
