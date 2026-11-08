@@ -40,15 +40,12 @@ func Home() string {
 func DefaultPath() string       { return filepath.Join(Home(), "config.json") }
 func WorkspacePath() string     { return filepath.Join(Home(), "workspace") }
 func LocalVaultPath() string    { return filepath.Join(Home(), "vault") }
-func BackupDir() string         { return filepath.Join(Home(), "backups") }
+func BackupDir() string         { return filepath.Join(Home(), "backups") } // old age backups (before 0.6); nothing writes here now
 func RuntimeDir() string        { return filepath.Join(Home(), "runtime") }
 func ToolsDir() string          { return filepath.Join(Home(), "tools") }
 func StateDir() string          { return filepath.Join(Home(), "state") }
 func LocalTrashDir() string     { return filepath.Join(Home(), "trash") }
 func LegacyDevicesPath() string { return filepath.Join(Home(), "devices.json") }
-func LegacyRecoveryKeyPath() string {
-	return filepath.Join(BackupDir(), "edrive-recovery-key.txt")
-}
 
 func Defaults(path string) Config {
 	if path == "" {

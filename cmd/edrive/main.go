@@ -38,12 +38,10 @@ func main() {
 		fmt.Println(version)
 		return
 	case "decode":
-		// A folder is a vault, read without Cryptomator; a file is an old age backup.
-		if len(args) == 2 && isDir(args[0]) {
-			run(app.DecodeVault(args[0], args[1]))
-		} else {
-			run(app.Decode(args))
+		if len(args) != 2 || !isDir(args[0]) {
+			fail(fmt.Errorf("usage: edrive decode <vault-folder> <new-folder>"))
 		}
+		run(app.DecodeVault(args[0], args[1]))
 		return
 	case "__clear-clipboard":
 		run(app.ClearClipboard(args))
@@ -77,8 +75,6 @@ func main() {
 		run(a.Diff())
 	case "verify":
 		run(a.Verify())
-	case "backup":
-		run(a.Backup(args))
 	case "cloud":
 		run(a.Cloud(args))
 	case "remove":

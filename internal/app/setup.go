@@ -242,11 +242,11 @@ func ensurePassword(reset bool) error {
 
 func printLegacyNotes() {
 	var notes []string
-	if _, err := os.Stat(config.LegacyRecoveryKeyPath()); err == nil {
-		notes = append(notes, "An old unencrypted recovery key is at "+config.LegacyRecoveryKeyPath()+".\n    It only opens backups made before this version. Move it to your password manager, then delete it.")
+	if entries, err := os.ReadDir(config.BackupDir()); err == nil && len(entries) > 0 {
+		notes = append(notes, "Old backups are in "+config.BackupDir()+". edrive no longer makes them: the vault is the copy,\n    and 'edrive decode' reads it without Cryptomator. Delete that folder when you are sure.")
 	}
 	if legacyKeychainItem("recovery") || legacyKeychainItem("identity:mac-1") {
-		notes = append(notes, "Old backup keys are still in your Keychain (no longer used). After saving them if needed, remove with:\n    security delete-generic-password -s edrive -a recovery\n    security delete-generic-password -s edrive -a identity:mac-1")
+		notes = append(notes, "Old backup keys are still in your Keychain (no longer used). Remove them with:\n    security delete-generic-password -s edrive -a recovery\n    security delete-generic-password -s edrive -a identity:mac-1")
 	}
 	if len(notes) == 0 {
 		return

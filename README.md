@@ -51,21 +51,6 @@ Everything except sync works offline. Sync runs by itself only in the background
 - If a large part of the vault suddenly disappears on one side, edrive does not copy those removals to the other side. Use `edrive sync --allow-deletes` if the removal was intended.
 - If you're offline, nothing fails. Changes wait until the next lock, unlock or `edrive sync`.
 
-## Backup
-
-```bash
-edrive backup                    # writes ~/.edrive/backups/edrive-backup.tar.zst.age
-edrive decode edrive-backup.tar.zst.age
-```
-
-A backup is one standalone, encrypted copy of the workspace, and each new one replaces the previous one. `edrive backup` creates a new passphrase and shows it **once**. Save it in your password manager; edrive doesn't store it anywhere. Use `--passphrase` to type your own instead.
-
-Restoring needs no setup, no cloud and no Cryptomator. It works with `edrive decode`, or with standard tools:
-
-```bash
-age -d edrive-backup.tar.zst.age | zstd -d | tar x
-```
-
 ## Reading the vault without Cryptomator
 
 ```bash
@@ -76,6 +61,8 @@ edrive verify                                         # proves it on your vault
 `edrive decode` reads a Cryptomator vault (format 8, the default since Cryptomator 1.6) with nothing but its password. It needs no setup, no Cryptomator, no FUSE and no internet, so your files stay readable even if Cryptomator disappears. It works on a copy of the vault downloaded from your cloud too. It refuses damaged or tampered data instead of guessing.
 
 `edrive verify` decodes your vault in memory with edrive's own decoder and compares every file with what Cryptomator shows. It writes nothing. `edrive doctor` reminds you to run it every 90 days.
+
+There is no separate backup any more: the vault in your cloud is the copy, and `edrive decode` opens it. Backups made by older versions (`~/.edrive/backups/*.tar.zst.age`) still open with standard tools: `age -d file | zstd -d | tar x`.
 
 ## Security model
 
@@ -99,7 +86,7 @@ edrive verify                                         # proves it on your vault
 ~/.edrive/vault        encrypted vault (synced)
 ~/.edrive/workspace    where it is mounted while open
 ~/.edrive/trash        files replaced or removed by sync
-~/.edrive/backups      standalone backups
+~/.edrive/backups      old backups from before 0.6 (nothing writes here now)
 ```
 
 ## Troubleshooting
@@ -108,7 +95,7 @@ edrive verify                                         # proves it on your vault
 
 ## Remove
 
-`edrive remove` deletes edrive's local state. It deletes the local vault only after the cloud confirms it has everything. Cloud data, trash and backups are left alone.
+`edrive remove` deletes edrive's local state. It deletes the local vault only after the cloud confirms it has everything. Cloud data, trash and old backups are left alone.
 
 ## Build from source
 

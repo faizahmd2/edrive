@@ -90,8 +90,8 @@ func (a App) Doctor() error {
 		check(true, "decoder", fmt.Sprintf("reads the vault without Cryptomator (checked %s ago)", roundDuration(time.Since(r.At))))
 	}
 
-	if _, err := os.Stat(config.LegacyRecoveryKeyPath()); err == nil {
-		note("old recovery key", "unencrypted at "+config.LegacyRecoveryKeyPath()+" (move to a password manager, then delete)")
+	if entries, err := os.ReadDir(config.BackupDir()); err == nil && len(entries) > 0 {
+		note("old backups", config.BackupDir()+" is no longer used (the vault itself is the copy; see README); delete it when you are sure")
 	}
 
 	fmt.Println()

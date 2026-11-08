@@ -51,20 +51,11 @@ var details = map[string]string{
 	"diff": `edrive diff
   Show what a sync would change, without changing anything.`,
 
-	"backup": `edrive backup [-o file] [--passphrase]
-  Write one encrypted copy of the workspace (replacing the previous one).
-  A new passphrase is generated and shown once; it is not stored anywhere.
-  --passphrase   type your own passphrase instead
-  Restore with 'edrive decode', or with: age -d file | zstd -d | tar x`,
-
 	"decode": `edrive decode <vault-folder> <new-folder>
   Read a Cryptomator vault with only its password, and write every file
   into <new-folder> as plain files. Needs no setup, no Cryptomator and no
   internet, so the vault stays readable even if Cryptomator disappears.
-  Example: edrive decode ~/.edrive/vault ~/Desktop/vault-plain
-
-edrive decode <backup-file> [old-recovery-key-file]
-  Restore an old edrive backup into a folder next to it.`,
+  Example: edrive decode ~/.edrive/vault ~/Desktop/vault-plain`,
 
 	"verify": `edrive verify
   Prove 'edrive decode' works on your vault: decodes it in memory with
@@ -78,10 +69,10 @@ edrive cloud remove
 
 	"remove": `edrive remove
   Remove edrive from this Mac. The local vault is deleted only after the cloud
-  confirms it has everything. Cloud data, trash and backups are not touched.`,
+  confirms it has everything. Cloud data, trash and old backups are not touched.`,
 }
 
-var order = []string{"open", "lock", "pwd", "status", "pass", "sync", "diff", "backup", "decode", "verify", "setup", "doctor", "cloud", "remove"}
+var order = []string{"open", "lock", "pwd", "status", "pass", "sync", "diff", "decode", "verify", "setup", "doctor", "cloud", "remove"}
 
 func Print(command string) {
 	if d, ok := details[command]; ok {
@@ -111,7 +102,6 @@ Sometimes:
   edrive pwd                  print the workspace path (unlocks for 30 min)
   edrive sync                 sync now (also: push, pull)
   edrive diff                 preview a sync
-  edrive backup               standalone encrypted backup
   edrive decode <vault> <dir> read the vault without Cryptomator
   edrive verify               prove that decode reads your vault
 
