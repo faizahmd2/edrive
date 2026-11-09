@@ -39,6 +39,9 @@ func DecodeVault(vaultDir, outDir string) error {
 		return fmt.Errorf("stopped after %d file(s): %w", st.Files, err)
 	}
 	fmt.Printf("Decoded %d file(s) and %d folder(s), %.1f MB, into %s\n", st.Files, st.Dirs, float64(st.Bytes)/1e6, out)
+	for _, u := range st.Unknown {
+		fmt.Println("  skipped, not understood:", u)
+	}
 	return nil
 }
 
@@ -83,6 +86,7 @@ func (a App) Verify() error {
 			return err
 		}
 		decoded, err := hashVault(v)
+		shared := v.Shared
 		v.Close()
 		if err != nil {
 			return fmt.Errorf("edrive's decoder could not read the vault: %w", err)
@@ -108,6 +112,7 @@ func (a App) Verify() error {
 			return err
 		}
 
+		leftovers := emptyLeftovers(decoded, shown)
 		diffs := compareTrees(decoded, shown)
 		if len(diffs) > 0 {
 			for i, d := range diffs {
@@ -123,7 +128,16 @@ func (a App) Verify() error {
 		if err := config.WriteFileAtomic(verifyPath(), data, 0600); err != nil {
 			return err
 		}
-		fmt.Printf("Verified %d file(s): your vault reads the same without Cryptomator.\n", len(decoded))
+		fmt.Printf("Verified %d file(s): your vault reads the same without Cryptomator.\n", len(decoded)-len(leftovers))
+		for _, pair := range shared {
+			fmt.Printf("Note: %s and %s are one folder seen in two places. Deleting either in Finder deletes the files in both.\n", pair[0], pair[1])
+		}
+		if len(leftovers) > 0 {
+			fmt.Printf("Also %d empty leftover(s) of folders deleted earlier. Cryptomator hides them too; they hold nothing:\n", len(leftovers))
+			for _, p := range leftovers {
+				fmt.Println("  " + p)
+			}
+		}
 		return nil
 	})
 }
@@ -141,6 +155,8 @@ func hashVault(v *cryptomator.Vault) (map[string]string, error) {
 			return nil
 		}
 		switch n.Kind {
+		case cryptomator.Unknown:
+			tree[n.Path] = "unknown: " + n.Reason
 		case cryptomator.Dir:
 			tree[n.Path] = "dir"
 		case cryptomator.Symlink:
@@ -205,6 +221,16 @@ func hashTree(root string) (map[string]string, error) {
 	return tree, err
 }
 
+func kindWord(v string) string {
+	switch {
+	case v == "dir":
+		return "a folder"
+	case strings.HasPrefix(v, "link:"):
+		return "a link"
+	}
+	return "a file"
+}
+
 func skipName(p string) bool { return strings.HasPrefix(filepath.Base(p), "._") }
 
 func sha(r io.Reader) (string, error) {
@@ -215,6 +241,20 @@ func sha(r io.Reader) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// An empty node folder (no dir.c9r) is what deleting a folder can leave behind. It holds nothing and Cryptomator hides it.
+func isEmptyLeftover(v string) bool { return strings.HasPrefix(v, "unknown: an empty folder") }
+
+func emptyLeftovers(decoded, shown map[string]string) []string {
+	var out []string
+	for p, v := range decoded {
+		if _, ok := shown[p]; !ok && isEmptyLeftover(v) {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // compareTrees lists every path the two trees disagree on, in order.
 func compareTrees(decoded, shown map[string]string) []string {
 	var diffs []string
@@ -223,12 +263,20 @@ func compareTrees(decoded, shown map[string]string) []string {
 		switch {
 		case !ok:
 			diffs = append(diffs, "missing from the decoder: "+p)
+		case strings.HasPrefix(got, "unknown: "):
+			diffs = append(diffs, fmt.Sprintf("the decoder does not understand %s (%s); Cryptomator shows it as %s", p, strings.TrimPrefix(got, "unknown: "), kindWord(want)))
 		case got != want:
 			diffs = append(diffs, "differs: "+p)
 		}
 	}
-	for p := range decoded {
-		if _, ok := shown[p]; !ok {
+	for p, got := range decoded {
+		_, ok := shown[p]
+		switch {
+		case !ok && isEmptyLeftover(got):
+			// a folder deleted earlier left its empty husk; Cryptomator hides it too, so they agree
+		case !ok && strings.HasPrefix(got, "unknown: "):
+			diffs = append(diffs, fmt.Sprintf("%s is broken in the vault (%s); Cryptomator does not show it either", p, strings.TrimPrefix(got, "unknown: ")))
+		case !ok:
 			diffs = append(diffs, "only in the decoder: "+p)
 		}
 	}

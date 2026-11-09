@@ -34,3 +34,15 @@ func TestHashTreeSkipsAppleDouble(t *testing.T) {
 		t.Fatalf("got %v", tree)
 	}
 }
+
+// A deleted folder's empty husk is hidden by Cryptomator too: a note, never a difference.
+func TestEmptyLeftoverIsNotADifference(t *testing.T) {
+	decoded := map[string]string{"a": "1", "old": "unknown: an empty folder in the vault (no dir.c9r inside)"}
+	shown := map[string]string{"a": "1"}
+	if got := compareTrees(decoded, shown); len(got) != 0 {
+		t.Fatalf("got %v", got)
+	}
+	if got := emptyLeftovers(decoded, shown); !reflect.DeepEqual(got, []string{"old"}) {
+		t.Fatalf("got %v", got)
+	}
+}

@@ -56,6 +56,7 @@ const (
 	File NodeKind = iota
 	Dir
 	Symlink
+	Unknown // an entry Cryptomator's format does not explain; its Reason says what is inside, and the walk goes on
 )
 
 // Node is one entry of the vault, by its plain path.
@@ -63,14 +64,17 @@ type Node struct {
 	Path   string // slash-separated, relative to the vault root, never empty
 	Kind   NodeKind
 	Target string // for a Symlink
+	Reason string // for an Unknown: what the entry holds, by the format's own file names, never a value
 	src    string // the encrypted contents file, for a File
 }
 
 // Vault is an opened vault. Close wipes its keys.
 type Vault struct {
-	root string
-	enc  []byte
-	mac  []byte
+	// Shared lists folder pairs that are one folder seen in two places, found by the last Walk
+	Shared [][2]string
+	root   string
+	enc    []byte
+	mac    []byte
 }
 
 // OpenVault checks the password and the vault config, and returns a vault
@@ -182,17 +186,19 @@ func (v *Vault) decryptName(encrypted, dirID string) (string, error) {
 // Walk visits every entry, parents before children, names in order. fn may
 // return fs.SkipDir on a Dir to skip what is inside it.
 func (v *Vault) Walk(fn func(Node) error) error {
-	return v.walk("", "", map[string]bool{}, 0, fn)
+	v.Shared = nil
+	return v.walk("", "", map[string]bool{}, map[string]string{"": ""}, 0, fn)
 }
 
-func (v *Vault) walk(dirID, prefix string, seen map[string]bool, depth int, fn func(Node) error) error {
-	if seen[dirID] {
-		return fmt.Errorf("a folder contains itself: %w", ErrCorrupt)
-	}
+// Two folder entries can point at one set of contents: a folder moved while a sync brought its old entry back.
+// Cryptomator shows the contents in both places, so this does too, and notes the pair in Shared. Only a folder inside
+// itself (an id already on the path down to it) is refused, as Unknown, so the rest of the vault still reads.
+func (v *Vault) walk(dirID, prefix string, above map[string]bool, first map[string]string, depth int, fn func(Node) error) error {
 	if depth > maxDirDepth {
 		return fmt.Errorf("folders are nested too deep: %w", ErrCorrupt)
 	}
-	seen[dirID] = true
+	above[dirID] = true
+	defer delete(above, dirID)
 	dir, err := v.dirPath(dirID)
 	if err != nil {
 		return err
@@ -241,6 +247,16 @@ func (v *Vault) walk(dirID, prefix string, seen map[string]bool, depth int, fn f
 	sort.Slice(items, func(i, j int) bool { return items[i].node.Path < items[j].node.Path })
 
 	for _, it := range items {
+		if it.node.Kind == Dir {
+			switch at, dup := first[it.child]; {
+			case above[it.child]:
+				it.node = Node{Path: it.node.Path, Kind: Unknown, Reason: "a folder inside itself"}
+			case dup:
+				v.Shared = append(v.Shared, [2]string{at, it.node.Path})
+			default:
+				first[it.child] = it.node.Path
+			}
+		}
 		err := fn(it.node)
 		if errors.Is(err, fs.SkipDir) && it.node.Kind == Dir {
 			continue
@@ -249,7 +265,7 @@ func (v *Vault) walk(dirID, prefix string, seen map[string]bool, depth int, fn f
 			return err
 		}
 		if it.node.Kind == Dir {
-			if err := v.walk(it.child, it.node.Path, seen, depth+1, fn); err != nil {
+			if err := v.walk(it.child, it.node.Path, above, first, depth+1, fn); err != nil {
 				return err
 			}
 		}
@@ -276,7 +292,7 @@ func (v *Vault) nodeAt(at string, isDir bool, plain string) (Node, string, error
 	if _, err := os.Stat(filepath.Join(at, "contents.c9r")); err == nil {
 		return Node{Path: plain, Kind: File, src: filepath.Join(at, "contents.c9r")}, "", nil
 	}
-	return Node{}, "", fmt.Errorf("%q is neither a file, a folder nor a link: %w", plain, ErrCorrupt)
+	return Node{Path: plain, Kind: Unknown, Reason: describe(at)}, "", nil
 }
 
 func (v *Vault) readAll(src string) ([]byte, error) {
@@ -286,6 +302,29 @@ func (v *Vault) readAll(src string) ([]byte, error) {
 	}
 	defer r.Close()
 	return io.ReadAll(r)
+}
+
+// describe says what an entry folder holds, using only the vault's own structure names (dir.c9r, contents.c9r…) and
+// counts, so a report never shows a value.
+func describe(at string) string {
+	entries, err := os.ReadDir(at)
+	if err != nil {
+		return "cannot be read: " + err.Error()
+	}
+	if len(entries) == 0 {
+		return "an empty folder in the vault (no dir.c9r inside)"
+	}
+	var known []string
+	other := 0
+	for _, e := range entries {
+		switch e.Name() {
+		case "dir.c9r", "symlink.c9r", "contents.c9r", "name.c9s", "dirid.c9r":
+			known = append(known, e.Name())
+		default:
+			other++
+		}
+	}
+	return fmt.Sprintf("a folder holding %v and %d other entries", known, other)
 }
 
 // Open returns the plain contents of a File.
@@ -402,6 +441,7 @@ func (r *contentReader) Close() error {
 type Stats struct {
 	Files, Dirs, Links int
 	Bytes              int64
+	Unknown            []string // entries the format does not explain, skipped
 }
 
 // DecodeTo writes the whole vault as plain files into out, which must not
@@ -430,6 +470,9 @@ func (v *Vault) DecodeTo(out string) (Stats, error) {
 		case Symlink:
 			st.Links++
 			return root.Symlink(n.Target, at)
+		case Unknown:
+			st.Unknown = append(st.Unknown, n.Path+": "+n.Reason)
+			return nil
 		}
 		st.Files++
 		src, err := v.Open(n)

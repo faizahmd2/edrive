@@ -338,3 +338,37 @@ func createEmptyVault(t *testing.T, root string, password []byte) {
 		t.Fatal(err)
 	}
 }
+
+// Two folders pointing at one set of contents (a moved folder whose old entry came back): both show the same files,
+// as Cryptomator does, and the pair is noted. Nothing is Unknown.
+func TestSharedFolderReadsInBothPlaces(t *testing.T) {
+	root := copyTree(t, filepath.Join("testdata", "vault8"))
+	var dirs []string
+	_ = filepath.WalkDir(filepath.Join(root, "d"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.Name() == "dir.c9r" && !d.IsDir() {
+			dirs = append(dirs, p)
+		}
+		return nil
+	})
+	if len(dirs) < 2 {
+		t.Skip("the fixture needs two folders")
+	}
+	id, _ := os.ReadFile(dirs[0])
+	if err := os.WriteFile(dirs[1], id, 0600); err != nil {
+		t.Fatal(err)
+	}
+	v, err := OpenVault(root, []byte(fixturePassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+	err = v.Walk(func(n Node) error {
+		if n.Kind == Unknown {
+			t.Errorf("%s: %s", n.Path, n.Reason)
+		}
+		return nil
+	})
+	if err != nil || len(v.Shared) != 1 {
+		t.Fatalf("walk: %v, shared %v", err, v.Shared)
+	}
+}
