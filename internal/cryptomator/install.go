@@ -19,7 +19,7 @@ import (
 const (
 	CLIVersion = "0.6.1"
 	cliSHA256  = "9252f8765db5068931d78f1ee74f7fe4d653605bf691d30e05c119eb5fa5d0d3"
-	cliURL     = "https://github.com/cryptomator/cli/releases/download/" + CLIVersion + "/cryptomator-cli-" + CLIVersion + "-mac-arm64.zip"
+	cliURL     = "https://api.github.com/repos/cryptomator/cli/releases/assets/218589040"
 	// Skymatic GmbH, the company behind Cryptomator.
 	cliTeamID = "YZQJQUHA3L"
 )
@@ -93,7 +93,14 @@ func download(url, dest string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Minute}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		resp, err := client.Get(url)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Accept", "application/octet-stream")
+
+		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
 			continue

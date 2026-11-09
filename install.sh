@@ -12,15 +12,26 @@ if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
   exit 1
 fi
 
-BASE="https://github.com/$REPO/releases/download/v$VERSION"
+# GitHub release asset IDs for edrive v0.6.0.
+# Update these IDs when publishing a new release.
+ASSET_ID="726477120"
+CHECKSUM_ASSET_ID="726477121"
+API_BASE="https://api.github.com/repos/$REPO/releases/assets"
 
 mkdir -p "$INSTALL_ROOT" "$INSTALL_DIR"
 TMP="$INSTALL_ROOT/.edrive-download.$$"
 trap 'rm -f "$TMP" "$TMP.sha256"' EXIT INT TERM
 
 echo "[edrive] downloading edrive v$VERSION..."
-curl -fsSL --retry 3 --output "$TMP" "$BASE/$ASSET"
-curl -fsSL --retry 3 --output "$TMP.sha256" "$BASE/$ASSET.sha256"
+curl -fsSL --retry 3 \
+  -H 'Accept: application/octet-stream' \
+  --output "$TMP" \
+  "$API_BASE/$ASSET_ID"
+
+curl -fsSL --retry 3 \
+  -H 'Accept: application/octet-stream' \
+  --output "$TMP.sha256" \
+  "$API_BASE/$CHECKSUM_ASSET_ID"
 
 expected="$(awk '{print $1}' "$TMP.sha256")"
 actual="$(shasum -a 256 "$TMP" | awk '{print $1}')"
