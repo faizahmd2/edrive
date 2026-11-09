@@ -15,7 +15,17 @@ import (
 	"github.com/faizahmd2/edrive/internal/vault"
 )
 
-const fuseTLibrary = "/usr/local/lib/libfuse-t.dylib"
+const (
+	fuseTLibrary = "/usr/local/lib/libfuse-t.dylib"
+	fuseTApp     = "/Applications/fuse-t.app" // does the mounting; an uninstall can remove it and leave the library behind
+)
+
+// fuseTInstalled needs both halves: the library Cryptomator loads and the app that serves the mount.
+func fuseTInstalled() bool {
+	_, lib := os.Stat(fuseTLibrary)
+	_, app := os.Stat(fuseTApp)
+	return lib == nil && app == nil
+}
 
 // Setup is safe to run any number of times: each step checks what is already
 // in place and only fixes what is missing or broken.
@@ -98,9 +108,9 @@ func ensureTools() error {
 	}
 	fmt.Println("  ✓ rclone")
 
-	if _, err := os.Stat(fuseTLibrary); err != nil {
+	if !fuseTInstalled() {
 		fmt.Println("  Installing FUSE-T (macOS may ask for your password)...")
-		if err := brew("install", "--cask", "fuse-t"); err != nil {
+		if err := brew("reinstall", "--cask", "fuse-t"); err != nil {
 			return err
 		}
 	}

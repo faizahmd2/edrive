@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="0.6.0"
+VERSION="0.6.1"
 REPO="faizahmd2/edrive"
 INSTALL_ROOT="$HOME/.local/lib/edrive"
 INSTALL_DIR="$HOME/.local/bin"

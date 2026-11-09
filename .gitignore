@@ -87,6 +87,8 @@ vault/
 vaults/
 /cryptomator/
 *.cryptomator
+# …except the small test vault made with the password edrive-test-only (internal/cryptomator/decode_test.go)
+!internal/cryptomator/testdata/vault8/*.cryptomator
 
 # If a vault or encrypted data is ever placed inside the repo
 # directory, keep it out of Git.

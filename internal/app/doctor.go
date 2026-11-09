@@ -33,8 +33,7 @@ func (a App) Doctor() error {
 
 	_, err := exec.LookPath("rclone")
 	check(err == nil, "rclone", orMissing(err == nil, "installed"))
-	_, err = os.Stat(fuseTLibrary)
-	check(err == nil, "FUSE-T", orMissing(err == nil, "installed"))
+	check(fuseTInstalled(), "FUSE-T", orMissing(fuseTInstalled(), "installed"))
 
 	cli := cryptomator.CLIPath(config.ToolsDir())
 	switch {

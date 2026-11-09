@@ -12,7 +12,7 @@ An encrypted workspace for your Mac, synced to your own cloud.
 Apple Silicon Mac with [Homebrew](https://brew.sh):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/faizahmd2/edrive/v0.6.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/faizahmd2/edrive/v0.6.1/install.sh | sh
 edrive setup
 ```
 
