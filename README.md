@@ -12,7 +12,7 @@ An encrypted workspace for your Mac, synced to your own cloud.
 Apple Silicon Mac with [Homebrew](https://brew.sh):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/faizahmd2/edrive/v0.6.1/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/faizahmd2/edrive/v0.6.2/install.sh | sh
 edrive setup
 ```
 
@@ -66,7 +66,7 @@ An app can keep each secret sealed on this Mac as one [age](https://age-encrypti
 - If many secrets would vanish at once, nothing is copied unless you pass `--allow-deletes`.
 - A damaged sealed file is skipped by name; every other secret still copies.
 
-A sealed file is `sec_<id>.age` holding UTF-8 JSON: `{"v":1,"id":"sec_<id>","path":"bank/sbi/netbanking","value":"…"}`. It lands at `mirror/bank/sbi/netbanking.txt`. `edrive status` shows when the mirror last ran, and `edrive doctor` reminds you after 30 days.
+A sealed file is `sec_<id>.age` holding UTF-8 JSON: a value, `{"v":1,"id":"sec_<id>","path":"bank/sbi/netbanking","value":"…"}`, which lands at `mirror/bank/sbi/netbanking.txt`; or a whole file (up to 40 MB), `{"v":2,"id":"sec_<id>","path":"faiz/aadhaar","file":{"name":"scan.pdf","b64":"…"}}`, which lands at `mirror/faiz/aadhaar/scan.pdf`. `edrive status` shows when the mirror last ran, and `edrive doctor` reminds you after 30 days.
 
 ## Reading the vault without Cryptomator
 

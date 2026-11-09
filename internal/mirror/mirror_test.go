@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -287,5 +288,44 @@ func TestCheckPath(t *testing.T) {
 		if CheckPath(p) == nil {
 			t.Errorf("%q allowed", p)
 		}
+	}
+}
+
+// A whole file (format v2) lands under its own name: mirror/<path>/<name>, byte for byte.
+func TestWholeFileLandsUnderItsName(t *testing.T) {
+	w := newWorld(t)
+	pdf := []byte("%PDF-1.4 a scan\x00\x01\x02 with binary bytes")
+	sealFile := func(id, path, name string, data []byte) {
+		w.t.Helper()
+		body, _ := json.Marshal(map[string]any{"v": 2, "id": id, "path": path, "file": map[string]string{"name": name, "b64": base64.StdEncoding.EncodeToString(data)}})
+		var out bytes.Buffer
+		enc, _ := age.Encrypt(&out, w.mac.Recipient(), w.key.Recipient())
+		_, _ = enc.Write(body)
+		_ = enc.Close()
+		_ = os.WriteFile(filepath.Join(w.sealed, id+".age"), out.Bytes(), 0600)
+	}
+	sealFile("sec_F", "faiz/aadhaar-card", "aadhaar scan.pdf", pdf)
+	w.seal("sec_V", "faiz/locker", "blue tiger")
+	if _, res, err := w.sync(false); err != nil || res.Written != 2 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	got, err := os.ReadFile(filepath.Join(w.mirror, "faiz", "aadhaar-card", "aadhaar scan.pdf"))
+	if err != nil || !bytes.Equal(got, pdf) {
+		t.Fatalf("file: %v %q", err, got)
+	}
+	w.has("faiz/locker", "blue tiger")
+	// a new scan replaces it; the old one waits in trash
+	sealFile("sec_F", "faiz/aadhaar-card", "aadhaar scan.pdf", []byte("%PDF-1.4 a new scan"))
+	if _, _, err := w.sync(false); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.trashed(); len(got) != 1 || !bytes.Equal([]byte(got[0]), pdf) {
+		t.Fatalf("trash holds %q", got)
+	}
+	// a name that climbs out is refused by name; the rest goes on
+	sealFile("sec_X", "faiz/x", "../escape.pdf", pdf)
+	_, problems, _ := Read(w.sealed, w.key)
+	if len(problems) != 1 || !strings.Contains(problems[0].Reason, "file name") {
+		t.Fatalf("problems %v", problems)
 	}
 }

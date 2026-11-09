@@ -4,7 +4,7 @@
 // <id>.age with id like sec_…, encrypted to the app's own key and to a mirror
 // key. The mirror key's private half lives only inside the vault
 // (mirror/.sync/key.txt), so one vault unlock reads them all. Each value is
-// written into the vault as mirror/<path>.txt, readable in the Cryptomator
+// written into the vault as mirror/<path>.txt (a whole file: mirror/<path>/<name>), readable in the Cryptomator
 // apps. The app on this Mac is the only place a secret changes; the vault is
 // a copy.
 //
@@ -19,6 +19,7 @@ package mirror
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -41,21 +42,30 @@ const (
 	TrashDir  = ".trash" // inside the mirror: what a sync replaced or removed
 	keyFile   = "key.txt"
 	stateFile = "state.json"
-	maxSealed = 1 << 20 // a sealed file over 1 MB is not a secret
+	maxSealed = 40 << 20 // a sealed value or file over 40 MB is not one this mirror takes
 )
 
 var sealedName = regexp.MustCompile(`^(sec_[0-9A-Za-z]+)\.age$`)
 
 // Secret is one sealed file, opened.
 type Secret struct {
-	ID       string `json:"id"`
-	Path     string `json:"path"`
-	Label    string `json:"label"`
-	Kind     string `json:"kind"`
-	Value    string `json:"value"`
-	SealedAt string `json:"sealed_at"`
-	V        int    `json:"v"`
-	cipher   string // SHA-256 of the sealed file
+	ID       string      `json:"id"`
+	Path     string      `json:"path"`
+	Label    string      `json:"label"`
+	Kind     string      `json:"kind"`
+	Value    string      `json:"value"`
+	File     *SealedFile `json:"file,omitempty"` // v2: a whole file instead of a value
+	SealedAt string      `json:"sealed_at"`
+	V        int         `json:"v"`
+	cipher   string      // SHA-256 of the sealed file
+	rel      string      // where it lands in the mirror: <path>.txt for a value, <path>/<name> for a file
+	data     []byte      // what is written there
+}
+
+// SealedFile is a whole file carried in a sealed secret (format v2).
+type SealedFile struct {
+	Name string `json:"name"`
+	B64  string `json:"b64"`
 }
 
 // Entry is what the last sync wrote for one secret.
@@ -183,11 +193,23 @@ func open(file string, id age.Identity) (Secret, error) {
 	if err := json.Unmarshal(plain, &s); err != nil {
 		return Secret{}, fmt.Errorf("it is not a sealed secret")
 	}
-	if s.V != 1 {
+	if s.V != 1 && s.V != 2 {
 		return Secret{}, fmt.Errorf("format v%d is not known to this edrive", s.V)
 	}
 	if err := CheckPath(s.Path); err != nil {
 		return Secret{}, err
+	}
+	if s.File == nil {
+		s.rel, s.data = s.Path+".txt", []byte(s.Value)
+	} else {
+		if err := CheckPath(s.File.Name); err != nil || strings.Contains(s.File.Name, "/") {
+			return Secret{}, fmt.Errorf("its file name %q is not allowed", s.File.Name)
+		}
+		data, err := base64.StdEncoding.DecodeString(s.File.B64)
+		if err != nil {
+			return Secret{}, fmt.Errorf("its file is damaged")
+		}
+		s.rel, s.data, s.File.B64 = s.Path+"/"+s.File.Name, data, ""
 	}
 	s.cipher = sum(sealed)
 	return s, nil
@@ -234,18 +256,18 @@ func MakePlan(secrets []Secret, problems []Problem, prev State, allowDeletes boo
 	}
 	for _, s := range secrets {
 		seen[s.ID] = true
-		if other, ok := byPath[s.Path]; ok {
+		if other, ok := byPath[s.rel]; ok {
 			p.Clashes = append(p.Clashes, Problem{s.ID + ".age", "it has the same path as " + other})
 			continue
 		}
-		byPath[s.Path] = s.ID
+		byPath[s.rel] = s.ID
 		was, ok := prev.Secrets[s.ID]
 		switch {
 		case !ok:
 			p.New = append(p.New, s)
-		case was.Cipher != s.cipher || was.Path != s.Path:
+		case was.Cipher != s.cipher || was.Path != s.rel:
 			p.Changed = append(p.Changed, s)
-			if was.Path != s.Path {
+			if was.Path != s.rel {
 				p.Moved[s.ID] = was.Path
 			}
 		default:
@@ -289,16 +311,16 @@ func Apply(mirror string, plan Plan, prev State, now time.Time) (State, Result, 
 	if plan.Refused != "" {
 		return prev, res, fmt.Errorf("nothing copied: %s; if that is right, run again with --allow-deletes", plan.Refused)
 	}
-	file := func(rel string) string { return filepath.Join(mirror, filepath.FromSlash(rel)+".txt") }
+	file := func(rel string) string { return filepath.Join(mirror, filepath.FromSlash(rel)) }
 	trash := filepath.Join(mirror, TrashDir, now.Format("20060102-150405"))
 	toTrash := func(rel string) error {
 		from := file(rel)
 		if _, err := os.Lstat(from); errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		to := filepath.Join(trash, filepath.FromSlash(rel)+".txt")
+		to := filepath.Join(trash, filepath.FromSlash(rel))
 		for n := 1; exists(to); n++ {
-			to = filepath.Join(trash, fmt.Sprintf("%s.%d.txt", filepath.FromSlash(rel), n))
+			to = filepath.Join(trash, fmt.Sprintf("%s.%d", filepath.FromSlash(rel), n))
 		}
 		if err := os.MkdirAll(filepath.Dir(to), 0700); err != nil {
 			return err
@@ -357,7 +379,7 @@ func Apply(mirror string, plan Plan, prev State, now time.Time) (State, Result, 
 		}
 	}
 	for _, s := range writes {
-		if err := toTrash(s.Path); err != nil { // a file the mirror never wrote, on a path a secret now takes
+		if err := toTrash(s.rel); err != nil { // a file the mirror never wrote, on a path a secret now takes
 			return prev, res, err
 		}
 	}
@@ -372,10 +394,10 @@ func Apply(mirror string, plan Plan, prev State, now time.Time) (State, Result, 
 		res.Removed++
 	}
 	for _, s := range writes {
-		if err := writeAtomic(file(s.Path), []byte(s.Value)); err != nil {
+		if err := writeAtomic(file(s.rel), s.data); err != nil {
 			return prev, res, err
 		}
-		next.Secrets[s.ID] = Entry{Path: s.Path, Cipher: s.cipher, Plain: sum([]byte(s.Value))}
+		next.Secrets[s.ID] = Entry{Path: s.rel, Cipher: s.cipher, Plain: sum(s.data)}
 		res.Written++
 	}
 	res.Total = len(next.Secrets)

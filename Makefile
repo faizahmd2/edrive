@@ -1,5 +1,5 @@
 BINARY := edrive
-VERSION := 0.6.1
+VERSION := 0.6.2
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: build test release clean
